@@ -44,6 +44,10 @@
 /* The kernel only supports PAD_SIZE of 0 and 512. */
 #define PAD_SIZE 512
 
+#define PAGE_SIZE (4096)
+#define PAGE_ALIGN(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+#define ROM_OFFSET 0
+#define ROM_ALIGN(x) (PAGE_ALIGN((x) + ROM_OFFSET) - ROM_OFFSET)
 /* The kernel assumes PAGE_CACHE_SIZE as block size. */
 #define PAGE_CACHE_SIZE (4096)
 
@@ -360,6 +364,13 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 			/* block pointers & data expansion allowance + data */
 			if (entry->size)
 				*fslen_ub += (4+26)*blocks + entry->size + 3;
+
+				/* If we are doing XIP we must allow for the worst case
+				 * possibility that rom alignment with grow the file by 
+				 * PAGE_SIZE + (entry->size % PAGE_SIZE)
+				 */
+				if(entry->mode & S_ISVTX)
+					*fslen_ub += PAGE_SIZE + (entry->size % PAGE_SIZE);				
 		}
 
 		/* Link it into the list */
@@ -565,6 +576,32 @@ static int is_zero(char const *begin, unsigned len)
 		       memcmp(begin, begin + 4, len) == 0))))))));
 }
 
+static unsigned int do_xip(char *base, unsigned int offset,
+			   char const *name, char *uncompressed,
+			   unsigned int size)
+{
+	unsigned int start, end;
+
+	/* align to page boundary */
+
+	start = ROM_ALIGN(offset);
+	memset(base + offset, 0, start - offset);
+
+	memcpy(base + start, uncompressed, size);
+
+	/* pad to page boundary */
+
+	end = ROM_ALIGN(start + size);
+	memset(base + start + size, 0, end - (start + size));
+
+	if (opt_verbose > 1) {
+		printf("XIP (%u+%u bytes)\toffset %u\t%s\n",
+			size, (end - offset) - size, offset, name);
+	}
+
+	return end;
+}
+
 /*
  * One 4-byte pointer per block and then the actual blocked
  * output. The first block does not need an offset pointer,
@@ -644,6 +681,9 @@ static unsigned int write_data(struct entry *entry, char *base, unsigned int off
 				set_data_offset(entry, base, offset);
 				entry->offset = offset;
 				map_entry(entry);
+				if (entry->mode & S_ISVTX)
+					offset = do_xip(base, offset, entry->name, entry->uncompressed, entry->size);
+				else
 				offset = do_compress(base, offset, entry->name, entry->uncompressed, entry->size);
 				unmap_entry(entry);
 			}
