@@ -51,9 +51,10 @@
 #include <utime.h>
 #include <sys/ioctl.h>
 #define _LINUX_STRING_H_
-#include <linux/fs.h>
-#include <linux/cramfs_fs.h>
+#include "linux/cramfs_fs.h"
 #include <zlib.h>
+
+#define BLKGETSIZE	_IO(0x12,96) /* return device size /512 (long *arg) */
 
 /* Exit codes used by fsck-type programs */
 #define FSCK_OK          0	/* No errors */
@@ -75,7 +76,7 @@ struct cramfs_super super;	/* just find the cramfs superblock once */
 static int opt_verbose = 0;	/* 1 = verbose (-v), 2+ = very verbose (-vv) */
 #ifdef INCLUDE_FS_TESTS
 static int opt_extract = 0;		/* extract cramfs (-x) */
-static char *extract_dir = "root";	/* extraction directory (-x) */
+static char *extract_dir = "/";	/* extraction directory (-x) */
 static uid_t euid;			/* effective UID */
 
 /* (cramfs_super + start) <= start_dir < end_dir <= start_data <= end_data */
@@ -155,7 +156,7 @@ static void test_super(int *start, size_t *length) {
 	}
 
 	if (*length < sizeof(struct cramfs_super)) {
-		die(FSCK_UNCORRECTED, 0, "file length too short");
+		die(FSCK_UNCORRECTED, 0, "filesystem smaller than a cramfs superblock!");
 	}
 
 	/* find superblock */
@@ -190,7 +191,8 @@ static void test_super(int *start, size_t *length) {
 			die(FSCK_UNCORRECTED, 0, "zero file count");
 		}
 		if (*length < super.size) {
-			die(FSCK_UNCORRECTED, 0, "file length too short");
+			die(FSCK_UNCORRECTED, 0, "file length too short, %lu is smaller than %lu",
+				*length, super.size);
 		}
 		else if (*length > super.size) {
 			fprintf(stderr, "warning: file extends past end of filesystem\n");
@@ -267,11 +269,11 @@ static void test_crc(int start)
 #ifdef INCLUDE_FS_TESTS
 static void print_node(char type, struct cramfs_inode *i, char *name)
 {
-	char info[10];
+	char info[11];
 
 	if (S_ISCHR(i->mode) || (S_ISBLK(i->mode))) {
 		/* major/minor numbers can be as high as 2^12 or 4096 */
-		snprintf(info, 10, "%4d,%4d", major(i->size), minor(i->size));
+		snprintf(info, 11, "%4d,%4d", major(i->size), minor(i->size));
 	}
 	else {
 		/* size be as high as 2^24 or 16777216 */
@@ -445,8 +447,10 @@ static void do_directory(char *path, struct cramfs_inode *i)
 	}
 	/* TODO: Do we need to check end_dir for empty case? */
 	memcpy(newpath, path, pathlen);
-	newpath[pathlen] = '/';
-	pathlen++;
+	if (pathlen > 1) {
+	    newpath[pathlen] = '/';
+	    pathlen++;
+	}
 	if (opt_verbose) {
 		print_node('d', i, path);
 	}
