@@ -74,14 +74,8 @@ with -z if you want it to create files that can have holes in them.
 Tools
 -----
 
-The cramfsck program at <http://sourceforge.net/projects/cramfs/> can
-(and perhaps even should) be used to test cramfs filesystems, although
-it does not try to fix errors since cramfs is a read-only filesystem and
-you can just re-run mkcramfs after fixing any bugs.  cramfsck can also
-extract cramfs filesystems without mounting them.
-
-If you're hacking on cramfs, some older and superseded cramfs tools are
-located at <http://cvs.bofh.asn.au/cramfs/>.
+The cramfs user-space tools, including mkcramfs and cramfsck, are
+located at <http://sourceforge.net/projects/cramfs/>.
 
 
 Future Development

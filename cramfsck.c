@@ -38,15 +38,15 @@
 #define _GNU_SOURCE
 #include <sys/types.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <dirent.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-#include <getopt.h>
 #include <sys/sysmacros.h>
 #include <utime.h>
 #include <sys/ioctl.h>

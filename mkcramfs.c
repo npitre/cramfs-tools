@@ -27,12 +27,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <dirent.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-#include <getopt.h>
 #include <stdarg.h>
 #include <linux/cramfs_fs.h>
 #include <zlib.h>
@@ -103,6 +102,10 @@ struct entry {
 	unsigned char *name;
 	unsigned int mode, size, uid, gid;
 
+	/* these are only used for non-empty files */
+	char *path;		/* always null except non-empty files */
+	int fd;			/* temporarily open files while mmapped */
+
 	/* FS data */
 	void *uncompressed;
 	/* points to other identical file */
@@ -153,28 +156,60 @@ static void die(int status, int syserr, const char *fmt, ...)
 	exit(status);
 }
 
-static int find_identical_file(struct entry *orig,struct entry *newfile)
+static void map_entry(struct entry *entry)
+{
+	if (entry->path) {
+		entry->fd = open(entry->path, O_RDONLY);
+		if (entry->fd < 0) {
+			die(MKFS_ERROR, 1, "open failed: %s", entry->path);
+		}
+		entry->uncompressed = mmap(NULL, entry->size, PROT_READ, MAP_PRIVATE, entry->fd, 0);
+		if (entry->uncompressed == MAP_FAILED) {
+			die(MKFS_ERROR, 1, "mmap failed: %s", entry->path);
+		}
+	}
+}
+
+static void unmap_entry(struct entry *entry)
+{
+	if (entry->path) {
+		if (munmap(entry->uncompressed, entry->size) < 0) {
+			die(MKFS_ERROR, 1, "munmap failed: %s", entry->path);
+		}
+		close(entry->fd);
+	}
+}
+
+static int find_identical_file(struct entry *orig, struct entry *newfile)
 {
 	if (orig == newfile)
 		return 1;
 	if (!orig)
 		return 0;
-	if (orig->size == newfile->size && orig->uncompressed &&
-	    !memcmp(orig->uncompressed, newfile->uncompressed, orig->size))
+	if (orig->size == newfile->size && (orig->path || orig->uncompressed))
 	{
-		newfile->same = orig;
-		return 1;
+		map_entry(orig);
+		map_entry(newfile);
+		if (!memcmp(orig->uncompressed, newfile->uncompressed, orig->size))
+		{
+			newfile->same = orig;
+			unmap_entry(newfile);
+			unmap_entry(orig);
+			return 1;
+		}
+		unmap_entry(newfile);
+		unmap_entry(orig);
 	}
-	return (find_identical_file(orig->child,newfile) ||
-		find_identical_file(orig->next,newfile));
+	return (find_identical_file(orig->child, newfile) ||
+		find_identical_file(orig->next, newfile));
 }
 
-static void eliminate_doubles(struct entry *root,struct entry *orig) {
+static void eliminate_doubles(struct entry *root, struct entry *orig) {
 	if (orig) {
-		if (orig->size && orig->uncompressed)
-			find_identical_file(root,orig);
-		eliminate_doubles(root,orig->child);
-		eliminate_doubles(root,orig->next);
+		if (orig->size && (orig->path || orig->uncompressed))
+			find_identical_file(root, orig);
+		eliminate_doubles(root, orig->child);
+		eliminate_doubles(root, orig->next);
 	}
 }
 
@@ -285,32 +320,20 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 		if (S_ISDIR(st.st_mode)) {
 			entry->size = parse_directory(root_entry, path, &entry->child, fslen_ub);
 		} else if (S_ISREG(st.st_mode)) {
-			/* TODO: We ought to open files in do_compress, one
-			   at a time, instead of amassing all these memory
-			   maps during parse_directory (which don't get used
-			   until do_compress anyway).  As it is, we tend to
-			   get EMFILE errors (especially if mkcramfs is run
-			   by non-root).
-
-			   While we're at it, do analagously for symlinks
-			   (which would just save a little memory). */
-			int fd = open(path, O_RDONLY);
-			if (fd < 0) {
-				warn_skip = 1;
-				continue;
-			}
 			if (entry->size) {
+				if (access(path, R_OK) < 0) {
+					warn_skip = 1;
+					continue;
+				}
+				entry->path = strdup(path);
+				if (!entry->path) {
+					die(MKFS_ERROR, 1, "strdup failed");
+				}
 				if ((entry->size >= 1 << CRAMFS_SIZE_WIDTH)) {
 					warn_size = 1;
 					entry->size = (1 << CRAMFS_SIZE_WIDTH) - 1;
 				}
-
-				entry->uncompressed = mmap(NULL, entry->size, PROT_READ, MAP_PRIVATE, fd, 0);
-				if (entry->uncompressed == MAP_FAILED) {
-					die(MKFS_ERROR, 1, "mmap failed");
-				}
 			}
-			close(fd);
 		} else if (S_ISLNK(st.st_mode)) {
 			entry->uncompressed = malloc(entry->size);
 			if (!entry->uncompressed) {
@@ -606,13 +629,13 @@ static unsigned int do_compress(char *base, unsigned int offset, char const *nam
 
 /*
  * Traverse the entry tree, writing data for every item that has
- * non-null entry->compressed (i.e. every symlink and non-empty
- * regfile).
+ * non-null entry->path (i.e. every non-empty regfile) and non-null
+ * entry->uncompressed (i.e. every symlink).
  */
 static unsigned int write_data(struct entry *entry, char *base, unsigned int offset)
 {
 	do {
-		if (entry->uncompressed) {
+		if (entry->path || entry->uncompressed) {
 			if (entry->same) {
 				set_data_offset(entry, base, entry->same->offset);
 				entry->offset = entry->same->offset;
@@ -620,7 +643,9 @@ static unsigned int write_data(struct entry *entry, char *base, unsigned int off
 			else {
 				set_data_offset(entry, base, offset);
 				entry->offset = offset;
+				map_entry(entry);
 				offset = do_compress(base, offset, entry->name, entry->uncompressed, entry->size);
+				unmap_entry(entry);
 			}
 		}
 		else if (entry->child)
@@ -751,7 +776,7 @@ int main(int argc, char **argv)
 
 	/* find duplicate files. TODO: uses the most inefficient algorithm
 	   possible. */
-	eliminate_doubles(root_entry,root_entry);
+	eliminate_doubles(root_entry, root_entry);
 
 	/* TODO: Why do we use a private/anonymous mapping here
 	   followed by a write below, instead of just a shared mapping
