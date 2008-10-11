@@ -353,7 +353,7 @@ static int uncompress_block(void *src, int len)
 	err = inflate(&stream, Z_FINISH);
 	if (err != Z_STREAM_END) {
 		die(FSCK_UNCORRECTED, 0, "decompression error %p(%d): %s",
-		    zError(err), src, len);
+		    src, len, zError(err));
 	}
 	return stream.total_out;
 }
