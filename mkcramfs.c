@@ -129,7 +129,7 @@ static const char *const memory_exhausted = "memory exhausted";
 /* In-core version of inode / directory entry. */
 struct entry {
 	/* stats */
-	unsigned char *name;
+	char *name;
 	unsigned int mode, size, uid, gid;
 
 	/* these are only used for non-empty files */
@@ -368,10 +368,10 @@ static void eliminate_doubles(struct entry *root, struct entry *orig)
  * We define our own sorting function instead of using alphasort which
  * uses strcoll and changes ordering based on locale information.
  */
-static int cramsort (const void *a, const void *b)
+static int cramsort (const struct dirent **a, const struct dirent **b)
 {
-	return strcmp ((*(const struct dirent **) a)->d_name,
-		       (*(const struct dirent **) b)->d_name);
+	return strcmp ((*a)->d_name,
+		       (*b)->d_name);
 }
 
 static unsigned int parse_directory(struct entry *root_entry, const char *name, struct entry **prev, loff_t *fslen_ub)
@@ -439,7 +439,7 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 			while ((entry->name[namelen] & 0xc0) == 0x80) {
 				namelen--;
 				/* are we reasonably certain it was UTF-8 ? */
-				if (entry->name[namelen] < 0x80 || !namelen) {
+				if (!(entry->name[namelen] & 0x80) || !namelen) {
 					error_msg_and_die("cannot truncate filenames not encoded in UTF-8");
 				}
 			}
@@ -521,7 +521,8 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 }
 
 /* Returns sizeof(struct cramfs_super), which includes the root inode. */
-static unsigned int write_superblock(struct entry *root, char *base, int size)
+static unsigned int write_superblock(struct entry *root, unsigned char *base,
+				     int size)
 {
 	struct cramfs_super *super = (struct cramfs_super *) base;
 	unsigned int offset = sizeof(struct cramfs_super) + image_length;
@@ -548,9 +549,9 @@ static unsigned int write_superblock(struct entry *root, char *base, int size)
 
 	memset(super->name, 0x00, sizeof(super->name));
 	if (opt_name)
-		strncpy(super->name, opt_name, sizeof(super->name));
+		strncpy((char *)super->name, opt_name, sizeof(super->name));
 	else
-		strncpy(super->name, "Compressed", sizeof(super->name));
+		strncpy((char *)super->name, "Compressed", sizeof(super->name));
 
 	super->root.mode = root->mode;
 	super->root.uid = root->uid;
@@ -561,7 +562,7 @@ static unsigned int write_superblock(struct entry *root, char *base, int size)
 	return offset;
 }
 
-static void set_data_offset(struct entry *entry, char *base, unsigned long offset)
+static void set_data_offset(struct entry *entry, unsigned char *base, unsigned long offset)
 {
 	struct cramfs_inode *inode = (struct cramfs_inode *) (base + entry->dir_offset);
 
@@ -610,7 +611,8 @@ static void print_node(struct entry *e)
  * entries, using a stack to remember the directories
  * we've seen.
  */
-static unsigned int write_directory_structure(struct entry *entry, char *base, unsigned int offset)
+static unsigned int write_directory_structure(struct entry *entry,
+					      unsigned char *base, unsigned int offset)
 {
 	int stack_entries = 0;
 	int stack_size = 64;
@@ -692,7 +694,7 @@ static unsigned int write_directory_structure(struct entry *entry, char *base, u
 	return offset;
 }
 
-static int is_zero(char const *begin, unsigned len)
+static int is_zero(unsigned char const *begin, unsigned len)
 {
 	if (!opt_holes)
 		return 0;
@@ -708,7 +710,7 @@ static int is_zero(char const *begin, unsigned len)
 		       memcmp(begin, begin + 4, len) == 0))))))));
 }
 
-static unsigned int do_xip(char *base, unsigned int offset, struct entry *entry)
+static unsigned int do_xip(unsigned char *base, unsigned int offset, struct entry *entry)
 {
 	unsigned int start, end;
 	unsigned int size = entry->size;
@@ -743,7 +745,7 @@ static unsigned int do_xip(char *base, unsigned int offset, struct entry *entry)
  * Note that size > 0, as a zero-sized file wouldn't ever
  * have gotten here in the first place.
  */
-static unsigned int do_compress(char *base, unsigned int offset, struct entry *entry)
+static unsigned int do_compress(unsigned char *base, unsigned int offset, struct entry *entry)
 {
 	unsigned int size = entry->size;
 	unsigned long original_size = size;
@@ -752,7 +754,7 @@ static unsigned int do_compress(char *base, unsigned int offset, struct entry *e
 	unsigned long blocks = (size - 1) / blksize + 1;
 	unsigned long curr = offset + 4 * blocks;
 	int change;
-	char *uncompressed = entry->uncompressed;
+	unsigned char *uncompressed = entry->uncompressed;
 
 	total_blocks += blocks; 
 
@@ -797,7 +799,7 @@ static unsigned int do_compress(char *base, unsigned int offset, struct entry *e
  * non-null entry->path (i.e. every non-empty regfile) and non-null
  * entry->uncompressed (i.e. every symlink).
  */
-static unsigned int write_data(struct entry *entry, char *base, unsigned int offset)
+static unsigned int write_data(struct entry *entry, unsigned char *base, unsigned int offset)
 {
 	do {
 		if (entry->path || entry->uncompressed) {
@@ -823,7 +825,8 @@ static unsigned int write_data(struct entry *entry, char *base, unsigned int off
 	return offset;
 }
 
-static unsigned int write_file(char *file, char *base, unsigned int offset)
+static unsigned int write_file(char *file, unsigned char *base,
+			       unsigned int offset)
 {
 	int fd;
 	char *buf;
@@ -930,7 +933,7 @@ void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
 			while ((entry->name[namelen] & 0xc0) == 0x80) {
 				namelen--;
 				/* are we reasonably certain it was UTF-8 ? */
-				if (entry->name[namelen] < 0x80 || !namelen) {
+				if (!(entry->name[namelen] & 0x80) || !namelen) {
 					error_msg_and_die("cannot truncate filenames not encoded in UTF-8");
 				}
 			}
@@ -981,7 +984,7 @@ void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
  */
 
 #ifdef __GNUC__
-#define SCANF_PREFIX "a"
+#define SCANF_PREFIX "m"
 #define SCANF_STRING(s) (&s)
 #define GETCWD_SIZE 0
 #else
@@ -1170,7 +1173,7 @@ int main(int argc, char **argv)
 {
 	struct stat st;		/* used twice... */
 	struct entry *root_entry;
-	char *rom_image;
+	unsigned char *rom_image;
 	ssize_t offset, written;
 	int fd;
 	/* initial guess (upper-bound) of required filesystem size */
@@ -1267,8 +1270,8 @@ int main(int argc, char **argv)
 
 	if (fslen_ub > MAXFSLEN) {
 		fprintf(stderr,
-			"warning: estimate of required size (upper bound) is %LdMB, but maximum image size is %uMB, we might die prematurely\n",
-			fslen_ub >> 20,
+			"warning: estimate of required size (upper bound) is %ldMB, but maximum image size is %uMB, we might die prematurely\n",
+			(long)(fslen_ub >> 20),
 			MAXFSLEN >> 20);
 		fslen_ub = MAXFSLEN;
 	}
@@ -1307,7 +1310,7 @@ int main(int argc, char **argv)
 
 	offset = write_directory_structure(root_entry->child, rom_image, offset);
 	if (opt_verbose)
-	printf("Directory data: %d bytes\n", offset);
+		printf("Directory data: %ld bytes\n", (long)offset);
 
 	offset = write_data(root_entry, rom_image, offset);
 
@@ -1315,12 +1318,12 @@ int main(int argc, char **argv)
 	   losetup works. */
 	offset = ((offset - 1) | (blksize - 1)) + 1;
 	if (opt_verbose)
-	printf("Everything: %d kilobytes\n", offset >> 10);
+		printf("Everything: %ld kilobytes\n", (long)(offset >> 10));
 
 	/* Write the superblock now that we can fill in all of the fields. */
 	write_superblock(root_entry, rom_image+opt_pad, offset);
 	if (opt_verbose)
-	printf("Super block: %d bytes\n", sizeof(struct cramfs_super));
+		printf("Super block: %ld bytes\n", sizeof(struct cramfs_super));
 
 	/* Put the checksum in. */
 	crc = crc32(0L, Z_NULL, 0);
