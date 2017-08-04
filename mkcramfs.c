@@ -94,6 +94,7 @@ static u32 opt_edition = 0;
 static int opt_errors = 0;
 static int opt_holes = 0;
 static int opt_pad = 0;
+static int opt_xip = 0;
 static int opt_verbose = 0;
 static char *opt_image = NULL;
 static char *opt_name = NULL;
@@ -136,6 +137,7 @@ static void usage(int status)
 		" -p         pad by %d bytes for boot code\n"
 		" -s         sort directory entries (old option, ignored)\n"
 		" -v         be more verbose\n"
+		" -x         make files with t mode bit XIPable (requires >= 4.?)\n"
 		" -z         make explicit holes (requires >= 2.3.39)\n"
 		" dirname    root of the directory tree to be compressed\n"
 		" outfile    output file\n", progname, PAD_SIZE);
@@ -362,15 +364,18 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 			int blocks = ((entry->size - 1) / blksize + 1);
 
 			/* block pointers & data expansion allowance + data */
-			if (entry->size)
-				*fslen_ub += (4+26)*blocks + entry->size + 3;
-
+			if (!entry->size) {
+				; /* nothing */
+			} else if (opt_xip && entry->mode & S_ISVTX) {
 				/* If we are doing XIP we must allow for the worst case
 				 * possibility that rom alignment with grow the file by 
 				 * PAGE_SIZE + (entry->size % PAGE_SIZE)
 				 */
-				if(entry->mode & S_ISVTX)
-					*fslen_ub += PAGE_SIZE + (entry->size % PAGE_SIZE);				
+				*fslen_ub += PAGE_SIZE + ROM_ALIGN(entry->size);
+				opt_xip = 2;
+			} else {
+				*fslen_ub += (4+26)*blocks + entry->size + 3;
+			}
 		}
 
 		/* Link it into the list */
@@ -397,6 +402,8 @@ static unsigned int write_superblock(struct entry *root, char *base, int size)
 		super->flags |= CRAMFS_FLAG_HOLES;
 	if (image_length > 0)
 		super->flags |= CRAMFS_FLAG_SHIFTED_ROOT_OFFSET;
+	if (opt_xip > 1)
+		super->flags |= CRAMFS_FLAG_XIP_FILES;
 	super->size = size;
 	memcpy(super->signature, CRAMFS_SIGNATURE, sizeof(super->signature));
 
@@ -681,7 +688,7 @@ static unsigned int write_data(struct entry *entry, char *base, unsigned int off
 				set_data_offset(entry, base, offset);
 				entry->offset = offset;
 				map_entry(entry);
-				if (entry->mode & S_ISVTX)
+				if (opt_xip > 1 && entry->mode & S_ISVTX)
 					offset = do_xip(base, offset, entry->name, entry->uncompressed, entry->size);
 				else
 				offset = do_compress(base, offset, entry->name, entry->uncompressed, entry->size);
@@ -739,7 +746,7 @@ int main(int argc, char **argv)
 		progname = argv[0];
 
 	/* command line options */
-	while ((c = getopt(argc, argv, "hEe:i:n:psvz")) != EOF) {
+	while ((c = getopt(argc, argv, "hEe:i:n:psvxz")) != EOF) {
 		switch (c) {
 		case 'h':
 			usage(MKFS_OK);
@@ -772,6 +779,9 @@ int main(int argc, char **argv)
 			break;
 		case 'v':
 			opt_verbose++;
+			break;
+		case 'x':
+			opt_xip = 1;
 			break;
 		case 'z':
 			opt_holes = 1;
