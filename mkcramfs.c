@@ -727,6 +727,10 @@ static unsigned int do_xip(unsigned char *base, unsigned int offset, struct entr
 	end = ROM_ALIGN(start + size);
 	memset(base + start + size, 0, end - (start + size));
 
+	set_data_offset(entry, base, start);
+	entry->offset = start;
+	total_blocks += (size - 1) / blksize + 1;
+
 	if (opt_verbose > 1) {
 		printf("XIP (%u+%u bytes)\toffset %u\t%s\n",
 			size, (end - offset) - size, offset, entry->name);
@@ -756,7 +760,9 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 	int change;
 	unsigned char *uncompressed = entry->uncompressed;
 
-	total_blocks += blocks; 
+	set_data_offset(entry, base, offset);
+	entry->offset = offset;
+	total_blocks += blocks;
 
 	do {
 		unsigned long len = 2 * blksize;
@@ -808,8 +814,6 @@ static unsigned int write_data(struct entry *entry, unsigned char *base, unsigne
 				entry->offset = entry->same->offset;
 			}
 			else {
-				set_data_offset(entry, base, offset);
-				entry->offset = offset;
 				map_entry(entry);
 				if (opt_xip > 1 && entry->mode & S_ISVTX)
 					offset = do_xip(base, offset, entry);
