@@ -571,6 +571,8 @@ static unsigned int write_directory_structure(struct entry *entry, char *base, u
 
 static int is_zero(char const *begin, unsigned len)
 {
+	if (!opt_holes)
+		return 0;
 	/* Returns non-zero iff the first LEN bytes from BEGIN are all NULs. */
 	return (len-- == 0 ||
 		(begin[0] == '\0' &&
@@ -583,18 +585,17 @@ static int is_zero(char const *begin, unsigned len)
 		       memcmp(begin, begin + 4, len) == 0))))))));
 }
 
-static unsigned int do_xip(char *base, unsigned int offset,
-			   char const *name, char *uncompressed,
-			   unsigned int size)
+static unsigned int do_xip(char *base, unsigned int offset, struct entry *entry)
 {
 	unsigned int start, end;
+	unsigned int size = entry->size;
 
 	/* align to page boundary */
 
 	start = ROM_ALIGN(offset);
 	memset(base + offset, 0, start - offset);
 
-	memcpy(base + start, uncompressed, size);
+	memcpy(base + start, entry->uncompressed, size);
 
 	/* pad to page boundary */
 
@@ -603,7 +604,7 @@ static unsigned int do_xip(char *base, unsigned int offset,
 
 	if (opt_verbose > 1) {
 		printf("XIP (%u+%u bytes)\toffset %u\t%s\n",
-			size, (end - offset) - size, offset, name);
+			size, (end - offset) - size, offset, entry->name);
 	}
 
 	return end;
@@ -619,14 +620,16 @@ static unsigned int do_xip(char *base, unsigned int offset,
  * Note that size > 0, as a zero-sized file wouldn't ever
  * have gotten here in the first place.
  */
-static unsigned int do_compress(char *base, unsigned int offset, char const *name, char *uncompressed, unsigned int size)
+static unsigned int do_compress(char *base, unsigned int offset, struct entry *entry)
 {
+	unsigned int size = entry->size;
 	unsigned long original_size = size;
 	unsigned long original_offset = offset;
 	unsigned long new_size;
 	unsigned long blocks = (size - 1) / blksize + 1;
 	unsigned long curr = offset + 4 * blocks;
 	int change;
+	char *uncompressed = entry->uncompressed;
 
 	total_blocks += blocks;
 
@@ -638,7 +641,7 @@ static unsigned int do_compress(char *base, unsigned int offset, char const *nam
 		if (input > blksize)
 			input = blksize;
 		size -= input;
-		if (!(opt_holes && is_zero (uncompressed, input))) {
+		if (!is_zero(uncompressed, input)) {
 			err = compress2(base + curr, &len, uncompressed, input, Z_BEST_COMPRESSION);
 			if (err != Z_OK) {
 				die(MKFS_ERROR, 0, "compression error: %s", zError(err));
@@ -664,7 +667,7 @@ static unsigned int do_compress(char *base, unsigned int offset, char const *nam
 	change = new_size - original_size;
 	if (opt_verbose > 1) {
 		printf("%6.2f%% (%+d bytes)\t%s\n",
-		       (change * 100) / (double) original_size, change, name);
+		       (change * 100) / (double) original_size, change, entry->name);
 	}
 
 	return curr;
@@ -689,9 +692,9 @@ static unsigned int write_data(struct entry *entry, char *base, unsigned int off
 				entry->offset = offset;
 				map_entry(entry);
 				if (opt_xip > 1 && entry->mode & S_ISVTX)
-					offset = do_xip(base, offset, entry->name, entry->uncompressed, entry->size);
+					offset = do_xip(base, offset, entry);
 				else
-				offset = do_compress(base, offset, entry->name, entry->uncompressed, entry->size);
+				offset = do_compress(base, offset, entry);
 				unmap_entry(entry);
 			}
 		}
