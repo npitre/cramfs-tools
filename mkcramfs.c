@@ -61,10 +61,11 @@
 /* The kernel only supports PAD_SIZE of 0 and 512. */
 #define PAD_SIZE 512
 
-#define PAGE_SIZE (4096)
-#define PAGE_ALIGN(x) (((x) + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+#define XIP_SIZE_ALIGN (4096)
+#define XIP_ALIGN(x) (((x) + XIP_SIZE_ALIGN - 1) & ~(XIP_SIZE_ALIGN - 1))
 #define ROM_OFFSET 0
-#define ROM_ALIGN(x) (PAGE_ALIGN((x) + ROM_OFFSET) - ROM_OFFSET)
+#define ROM_ALIGN(x) (XIP_ALIGN((x) + ROM_OFFSET) - ROM_OFFSET)
+
 /* The kernel assumes PAGE_CACHE_SIZE as block size. */
 #define PAGE_CACHE_SIZE (4096)
 
@@ -499,11 +500,13 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 			if (!entry->size) {
 				; /* nothing */
 			} else if (opt_xip && entry->mode & S_ISVTX) {
-				/* If we are doing XIP we must allow for the worst case
-				 * possibility that rom alignment with grow the file by 
-				 * PAGE_SIZE + (entry->size % PAGE_SIZE)
+				/*
+				 * If we are doing XIP we must allow for the worst case
+				 * possibility of file start and size
+				 * alignment.
 				 */
-				*fslen_ub += PAGE_SIZE + ROM_ALIGN(entry->size);
+				*fslen_ub += XIP_SIZE_ALIGN;
+				*fslen_ub += XIP_ALIGN(entry->size);
 				opt_xip = 2;
 			} else {
 				*fslen_ub += (4+26)*blocks + entry->size + 3;
