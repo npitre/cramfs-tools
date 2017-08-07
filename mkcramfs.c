@@ -696,17 +696,26 @@ static int is_zero(unsigned char const *begin, unsigned len)
 		return 0;
 }
 
+static void do_compress(unsigned char *outbuf, unsigned long *outsize_p,
+			unsigned char *inbuf, unsigned long insize)
+{
+	int ret;
+
+	ret = compress2(outbuf, outsize_p, inbuf, insize, Z_BEST_COMPRESSION);
+	if (ret != Z_OK)
+		error_msg_and_die("compression error: %s\n", zError(ret));
+}
+
 /*
  * One 4-byte pointer per block and then the actual blocked
- * output. The first block does not need an offset pointer,
- * as it will start immediately after the pointer block;
- * so the i'th pointer points to the end of the i'th block
- * (i.e. the start of the (i+1)'th block or past EOF).
+ * output. The block data may or may not be compressed, and
+ * may or may not be contiguous with previous blocks. Those
+ * variations are encoded in the block pointer top bits.
  *
  * Note that size > 0, as a zero-sized file wouldn't ever
  * have gotten here in the first place.
  */
-static unsigned int do_compress(unsigned char *base, unsigned int offset, struct entry *entry)
+static unsigned int write_blocks(unsigned char *base, unsigned int offset, struct entry *entry)
 {
 	unsigned int size = entry->size;
 	unsigned int blocks = (size - 1) / blksize + 1;
@@ -735,7 +744,7 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 			 */
 			curr = (curr + 3) & ~3;
 			blockptr_val = (curr >> 2) | CRAMFS_BLK_FLAG_DIRECT_PTR;
-			compress(base + curr + 2, &len, data, input);
+			do_compress(base + curr + 2, &len, data, input);
 			if (2 + len < input) {
 				*(u16 *)(base + curr) = len;
 				curr += 2 + len;
@@ -757,11 +766,7 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 			 * do uncompressed blocks if allowed and beneficial.
 			 */
 			unsigned int flags = 0;
-			compress(base + curr, &len, data, input);
-			if (len > blksize*2) {
-				/* (I don't think this can happen with zlib.) */
-				error_msg_and_die("AIEEE: block \"compressed\" to > 2*blocklength (%ld)\n", len);
-			}
+			do_compress(base + curr, &len, data, input);
 			if (opt_extblkptr && len >= input) {
 				/* Better keep it uncompressed */
 				if (opt_verbose > 2)
@@ -815,7 +820,7 @@ static unsigned int write_data(struct entry *entry, unsigned char *base, unsigne
 				set_data_offset(entry, base, offset);
 				entry->offset = offset;
 				map_entry(entry);
-				offset = do_compress(base, offset, entry);
+				offset = write_blocks(base, offset, entry);
 				unmap_entry(entry);
 			}
 		}
