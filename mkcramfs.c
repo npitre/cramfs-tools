@@ -716,15 +716,47 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 	total_blocks += blocks; 
 
 	do {
+		u32 blockptr_val;
 		unsigned long len = 2 * blksize;
 		unsigned int input = size;
-		unsigned int flags = 0;
 		if (input > blksize)
 			input = blksize;
 		size -= input;
+
 		if (is_zero(data, input)) {
+			/* just mark the hole */
+			blockptr_val = curr;
 			super_flags |= CRAMFS_FLAG_HOLES;
+		} else if (0) {
+			/*
+			 * Compressed block with a direct block pointer:
+			 * Minimum alignment is 4 bytes and the size
+			 * is included in the block data.
+			 */
+			curr = (curr + 3) & ~3;
+			blockptr_val = (curr >> 2) | CRAMFS_BLK_FLAG_DIRECT_PTR;
+			compress(base + curr + 2, &len, data, input);
+			if (2 + len < input) {
+				*(u16 *)(base + curr) = len;
+				curr += 2 + len;
+			} else {
+				/*
+				 * Uncompressed is not smaller than
+				 * the original. Let's use a direct
+				 * uncompressed block instead.
+				 */
+				len = input;
+				memcpy(base + curr, data, len);
+				curr += len;
+				blockptr_val |= CRAMFS_BLK_FLAG_UNCOMPRESSED;
+			}
 		} else {
+			/*
+			 * Normal compressed block with no particular
+			 * alignment requirement. We still opportunistically
+			 * do uncompressed blocks if allowed and beneficial.
+			 */
+			unsigned int flags = 0;
 			compress(base + curr, &len, data, input);
 			if (len > blksize*2) {
 				/* (I don't think this can happen with zlib.) */
@@ -738,14 +770,16 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 				len = input;
 				memcpy(base + curr, data, len);
 				flags = CRAMFS_BLK_FLAG_UNCOMPRESSED;
-				super_flags |= CRAMFS_FLAG_EXT_BLOCK_POINTERS;
 			}
 			curr += len;
+			blockptr_val = curr | flags;
 		}
-		data += input;
 
-		*(u32 *) (base + offset) = curr | flags;
+		data += input;
+		*(u32 *) (base + offset) = blockptr_val;
 		offset += 4;
+		if (blockptr_val & CRAMFS_BLK_FLAGS)
+			super_flags |= CRAMFS_FLAG_EXT_BLOCK_POINTERS;
 	} while (size);
 
 	if (opt_verbose > 1) {
