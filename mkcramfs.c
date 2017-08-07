@@ -97,6 +97,7 @@ static const char *progname = "mkcramfs";
 static unsigned int blksize = PAGE_CACHE_SIZE;
 static long total_blocks = 0, total_nodes = 1; /* pre-count the root node */
 static int image_length = 0;
+static int super_flags = CRAMFS_FLAG_FSID_VERSION_2 | CRAMFS_FLAG_SORTED_DIRS;
 
 
 /*
@@ -111,6 +112,7 @@ static int image_length = 0;
  */
 static u32 opt_edition = 0;
 static int opt_errors = 0;
+static int opt_extblkptr = 0;
 static int opt_holes = 0;
 static int opt_pad = 0;
 static int opt_verbose = 0;
@@ -157,6 +159,7 @@ static void usage(int status)
 		" -p         pad by %d bytes for boot code\n"
 		" -s         sort directory entries (old option, ignored)\n"
 		" -v         be more verbose\n"
+		" -x         use extended block pointers (requires >= 4.14?)\n"
 		" -z         make explicit holes (requires >= 2.3.39)\n"
 		" -D         Use the named FILE as a device table file\n"
 		" -q         squash permissions (make everything owned by root)\n"
@@ -516,9 +519,7 @@ static unsigned int write_superblock(struct entry *root, unsigned char *base,
 	}
 
 	super->magic = CRAMFS_MAGIC;
-	super->flags = CRAMFS_FLAG_FSID_VERSION_2 | CRAMFS_FLAG_SORTED_DIRS;
-	if (opt_holes)
-		super->flags |= CRAMFS_FLAG_HOLES;
+	super->flags = super_flags;
 	if (image_length > 0)
 		super->flags |= CRAMFS_FLAG_SHIFTED_ROOT_OFFSET;
 	super->size = size;
@@ -721,21 +722,30 @@ static unsigned int do_compress(unsigned char *base, unsigned int offset, struct
 	do {
 		unsigned long len = 2 * blksize;
 		unsigned int input = size;
+		unsigned int flags = 0;
 		if (input > blksize)
 			input = blksize;
 		size -= input;
-		if (!is_zero(uncompressed, input)) {
+		if (is_zero(uncompressed, input)) {
+			super_flags |= CRAMFS_FLAG_HOLES;
+		} else {
 			compress(base + curr, &len, uncompressed, input);
+			if (len > blksize*2) {
+				/* (I don't think this can happen with zlib.) */
+				error_msg_and_die("AIEEE: block \"compressed\" to > 2*blocklength (%ld)\n", len);
+			}
+			if (opt_extblkptr && len >= input) {
+				/* Better keep it uncompressed */
+				len = input;
+				memcpy(base + curr, uncompressed, len);
+				flags = CRAMFS_BLK_FLAG_UNCOMPRESSED;
+				super_flags |= CRAMFS_FLAG_EXT_BLOCK_POINTERS;
+			}
 			curr += len;
 		}
 		uncompressed += input;
 
-		if (len > blksize*2) {
-			/* (I don't think this can happen with zlib.) */
-			error_msg_and_die("AIEEE: block \"compressed\" to > 2*blocklength (%ld)\n", len);
-		}
-
-		*(u32 *) (base + offset) = curr;
+		*(u32 *) (base + offset) = curr | flags;
 		offset += 4;
 	} while (size);
 
@@ -1147,7 +1157,7 @@ int main(int argc, char **argv)
 		progname = argv[0];
 
 	/* command line options */
-	while ((c = getopt(argc, argv, "hEe:i:n:psvzD:q")) != EOF) {
+	while ((c = getopt(argc, argv, "hEe:i:n:psvxzD:q")) != EOF) {
 		switch (c) {
 		case 'h':
 			usage(MKFS_OK);
@@ -1180,6 +1190,9 @@ int main(int argc, char **argv)
 			break;
 		case 'v':
 			opt_verbose++;
+			break;
+		case 'x':
+			opt_extblkptr = 1;
 			break;
 		case 'z':
 			opt_holes = 1;
