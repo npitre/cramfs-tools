@@ -1209,8 +1209,8 @@ int main(int argc, char **argv)
 
 	root_entry = xcalloc(1, sizeof(struct entry));
 	root_entry->mode = st.st_mode;
-	root_entry->uid = st.st_uid;
-	root_entry->gid = st.st_gid;
+	root_entry->uid = opt_squash ? 0 : st.st_uid;
+	root_entry->gid = opt_squash ? 0 : st.st_gid;
 
 	root_entry->size = parse_directory(root_entry, dirname, &root_entry->child, &fslen_ub);
 
