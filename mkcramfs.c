@@ -52,6 +52,7 @@
 #ifdef DMALLOC
 #include <dmalloc.h>
 #endif
+#include <elf.h>
 
 /* Exit codes used by mkfs-type programs */
 #define MKFS_OK          0	/* No errors */
@@ -115,8 +116,10 @@ static int opt_errors = 0;
 static int opt_extblkptr = 0;
 static int opt_holes = 0;
 static int opt_pad = 0;
-static int opt_verbose = 0;
 static int opt_squash = 0;
+static int opt_verbose = 0;
+static int opt_xip = 0;
+static int opt_xip_mmu = 0;
 static char *opt_image = NULL;
 static char *opt_name = NULL;
 
@@ -160,6 +163,7 @@ static void usage(int status)
 		" -s         sort directory entries (old option, ignored)\n"
 		" -v         be more verbose\n"
 		" -x         use extended block pointers (requires >= 4.14?)\n"
+		" -X         allow XIP of ELF files (imply -x)\n"
 		" -z         make explicit holes (requires >= 2.3.39)\n"
 		" -D         Use the named FILE as a device table file\n"
 		" -q         squash permissions (make everything owned by root)\n"
@@ -696,6 +700,45 @@ static int is_zero(unsigned char const *begin, unsigned len)
 		return 0;
 }
 
+/*
+ * This is used to determine what part of a file should be kept
+ * uncompressed. This returns true if the block at given offset contains
+ * at least one loadable segment with given flags set and cleared.
+ */
+static int is_elf_loadable(struct entry *entry, unsigned int offset,
+			   int flags_set, int flags_clear)
+{
+	Elf32_Ehdr *hdr;
+	Elf32_Phdr *phdr;
+	int i, flags;
+
+	hdr = (Elf32_Ehdr *)entry->uncompressed;
+	if (sizeof(*hdr) > entry->size ||
+	    hdr->e_ident[EI_MAG0] != ELFMAG0 ||
+	    hdr->e_ident[EI_MAG1] != ELFMAG1 ||
+	    hdr->e_ident[EI_MAG2] != ELFMAG2 ||
+	    hdr->e_ident[EI_MAG3] != ELFMAG3 ||
+	    hdr->e_ident[EI_CLASS] != ELFCLASS32 ||
+	    hdr->e_ident[EI_VERSION] != EV_CURRENT ||
+	    hdr->e_phoff + hdr->e_phnum * sizeof(*phdr) > entry->size)
+		return 0;
+
+	phdr = (Elf32_Phdr *)(entry->uncompressed + hdr->e_phoff);
+	for (i = 0; i < hdr->e_phnum; i++) {
+		if (phdr[i].p_type != PT_LOAD)
+			continue;
+		if (phdr[i].p_offset >= offset + blksize)
+			continue;
+		if (phdr[i].p_offset + phdr[i].p_filesz <= offset)
+			continue;
+		flags = phdr[i].p_flags;
+		if ((flags & flags_set) && !(flags & flags_clear))
+			return 1;
+	}
+
+	return 0;
+}
+	
 static void do_compress(unsigned char *outbuf, unsigned long *outsize_p,
 			unsigned char *inbuf, unsigned long insize)
 {
@@ -726,13 +769,44 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 
 	do {
 		u32 blockptr_val;
+		unsigned int do_direct_aligned = 0;
 		unsigned long len = 2 * blksize;
 		unsigned int input = size;
 		if (input > blksize)
 			input = blksize;
-		size -= input;
 
-		if (is_zero(data, input)) {
+		if (opt_xip) {
+			/*
+			 * Find out if the current block contains
+			 * (part of) a loadable segment we want to
+			 * keep uncompressed. For MMU-less Linux the
+			 * only XIPable segments are read-only/executable
+			 * and alignment is not important. With a MMU
+			 * the writable segments may also be XIPable
+			 * as they will be COWed but the tradeoff is
+			 * questionable. With a MMU this must be page
+			 * aligned and would benefit from an out-of-line
+			 * placement but that's for the TODO list.
+			 */
+			unsigned int file_offset = entry->size - size;
+			if (is_elf_loadable(entry, file_offset,
+			    		    PF_R|PF_X, PF_W))
+				do_direct_aligned =
+					opt_xip_mmu ? blksize : 8;
+		}
+
+		if (do_direct_aligned) {
+			int mask = do_direct_aligned - 1;
+			curr = (curr + mask) & ~mask;
+			blockptr_val = (curr >> 2)
+				     | CRAMFS_BLK_FLAG_DIRECT_PTR
+				     | CRAMFS_BLK_FLAG_UNCOMPRESSED;
+			memcpy(base + curr, data, input);
+			if (opt_verbose > 2)
+				printf("XIP at %#x for file offset %#x\n",
+				       curr, entry->size - size);
+			curr += input;
+		} else if (is_zero(data, input)) {
 			/* just mark the hole */
 			blockptr_val = curr;
 			super_flags |= CRAMFS_FLAG_HOLES;
@@ -781,6 +855,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 		}
 
 		data += input;
+		size -= input;
 		*(u32 *) (base + offset) = blockptr_val;
 		offset += 4;
 		if (blockptr_val & CRAMFS_BLK_FLAGS)
@@ -1196,7 +1271,7 @@ int main(int argc, char **argv)
 		progname = argv[0];
 
 	/* command line options */
-	while ((c = getopt(argc, argv, "hEe:i:n:psvxzD:q")) != EOF) {
+	while ((c = getopt(argc, argv, "hEe:i:n:psvxXzD:q")) != EOF) {
 		switch (c) {
 		case 'h':
 			usage(MKFS_OK);
@@ -1231,6 +1306,12 @@ int main(int argc, char **argv)
 			opt_verbose++;
 			break;
 		case 'x':
+			opt_extblkptr = 1;
+			break;
+		case 'X':
+			if (opt_xip)
+				opt_xip_mmu = 1;
+			opt_xip = 1;
 			opt_extblkptr = 1;
 			break;
 		case 'z':
