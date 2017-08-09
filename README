@@ -37,8 +37,22 @@ No timestamps are stored in a cramfs, so these default to the epoch
 the update lasts only as long as the inode is cached in memory, after
 which the timestamp reverts to 1970, i.e. moves backwards in time.
 
+This version of mkcramfs implements block pointer extensions that allows
+for uncompressed blocks and random block placementt. Currently this is
+used to avoid compressing small files that end up taking more space once
+"compressed" (enabled with mkcramfs -x). A kernel with the appropriate
+support is required.
+
+It is possible to have some files, or portions of some files, kept
+uncompressed and properly aligned to allow direct mapping into user
+space for eXecute-In-Place (XIP) of program files. This requires that
+the cramfs image be stored in ROM or Flash and accessible via the memory
+bus. This is currently performed on the read-only segments of ELF files
+with mkcramfs -X (or -X twice for target systems with a MMU for which a
+greater alignment is necessary). This implies -x as described above.
+
 Currently, cramfs must be written and read with architectures of the
-same endianness, and can be read only by kernels with PAGE_CACHE_SIZE
+same endianness, and can be read only by kernels with PAGE_SIZE
 == 4096.  At least the latter of these is a bug, but it hasn't been
 decided what the best fix is.  For the moment if you have larger pages
 you can just change the #define in mkcramfs.c, so long as you don't

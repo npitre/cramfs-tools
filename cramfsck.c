@@ -66,7 +66,7 @@
 #define FSCK_LIBRARY     128	/* Shared library error */
 
 #define PAD_SIZE 512
-#define PAGE_CACHE_SIZE (4096)
+#define PAGE_SIZE (4096)
 
 static const char *progname = "cramfsck";
 
@@ -93,7 +93,7 @@ static char read_buffer[ROMBUFFERSIZE * 2];
 static unsigned long read_buffer_block = ~0UL;
 
 /* Uncompressing data structures... */
-static char outbuffer[PAGE_CACHE_SIZE*2];
+static char outbuffer[PAGE_SIZE*2];
 static z_stream stream;
 
 /* Prototypes */
@@ -183,7 +183,7 @@ static void test_super(int *start, size_t *length) {
 	if (super.flags & ~CRAMFS_SUPPORTED_FLAGS) {
 		die(FSCK_ERROR, 0, "unsupported filesystem features");
 	}
-	if (super.size < PAGE_CACHE_SIZE) {
+	if (super.size < PAGE_SIZE) {
 		die(FSCK_UNCORRECTED, 0, "superblock size (%d) too small", super.size);
 	}
 	if (super.flags & CRAMFS_FLAG_FSID_VERSION_2) {
@@ -345,11 +345,11 @@ static int uncompress_block(void *src, int len)
 	stream.avail_in = len;
 
 	stream.next_out = (unsigned char *) outbuffer;
-	stream.avail_out = PAGE_CACHE_SIZE*2;
+	stream.avail_out = PAGE_SIZE*2;
 
 	inflateReset(&stream);
 
-	if (len > PAGE_CACHE_SIZE*2) {
+	if (len > PAGE_SIZE*2) {
 		die(FSCK_UNCORRECTED, 0, "data block too large");
 	}
 	err = inflate(&stream, Z_FINISH);
@@ -362,10 +362,10 @@ static int uncompress_block(void *src, int len)
 
 static void do_uncompress(char *path, int fd, unsigned long offset, unsigned long size)
 {
-	unsigned long curr = offset + 4 * ((size + PAGE_CACHE_SIZE - 1) / PAGE_CACHE_SIZE);
+	unsigned long curr = offset + 4 * ((size + PAGE_SIZE - 1) / PAGE_SIZE);
 
 	do {
-		unsigned long out = PAGE_CACHE_SIZE;
+		unsigned long out = PAGE_SIZE;
 		unsigned long next = *(u32 *) romfs_read(offset);
 
 		if (next > end_data) {
@@ -375,9 +375,9 @@ static void do_uncompress(char *path, int fd, unsigned long offset, unsigned lon
 		offset += 4;
 		if (curr == next) {
 			if (opt_verbose > 1) {
-				printf("  hole at %ld (%d)\n", curr, PAGE_CACHE_SIZE);
+				printf("  hole at %ld (%d)\n", curr, PAGE_SIZE);
 			}
-			if (size < PAGE_CACHE_SIZE)
+			if (size < PAGE_SIZE)
 				out = size;
 			memset(outbuffer, 0x00, out);
 		}
@@ -387,8 +387,8 @@ static void do_uncompress(char *path, int fd, unsigned long offset, unsigned lon
 			}
 			out = uncompress_block(romfs_read(curr), next - curr);
 		}
-		if (size >= PAGE_CACHE_SIZE) {
-			if (out != PAGE_CACHE_SIZE) {
+		if (size >= PAGE_SIZE) {
+			if (out != PAGE_SIZE) {
 				die(FSCK_UNCORRECTED, 0, "non-block (%ld) bytes", out);
 			}
 		} else {

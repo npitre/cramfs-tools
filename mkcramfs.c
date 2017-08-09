@@ -62,8 +62,8 @@
 /* The kernel only supports PAD_SIZE of 0 and 512. */
 #define PAD_SIZE 512
 
-/* The kernel assumes PAGE_CACHE_SIZE as block size. */
-#define PAGE_CACHE_SIZE (4096)
+/* The kernel assumes PAGE_SIZE as block size. */
+#define PAGE_SIZE (4096)
 
 /*
  * The longest filename component to allow for in the input directory tree.
@@ -87,15 +87,15 @@
  */
 #define MAXFSLEN ((((1 << CRAMFS_OFFSET_WIDTH) - 1) << 2) /* offset */ \
 		  + (1 << CRAMFS_SIZE_WIDTH) - 1 /* filesize */ \
-		  + (1 << CRAMFS_SIZE_WIDTH) * 4 / PAGE_CACHE_SIZE /* block pointers */ )
+		  + (1 << CRAMFS_SIZE_WIDTH) * 4 / PAGE_SIZE /* block pointers */ )
 
 
-/* The kernel assumes PAGE_CACHE_SIZE as block size. */
-#define PAGE_CACHE_SIZE (4096)
+/* The kernel assumes PAGE_SIZE as block size. */
+#define PAGE_SIZE (4096)
 
 
 static const char *progname = "mkcramfs";
-static unsigned int blksize = PAGE_CACHE_SIZE;
+static unsigned int blksize = PAGE_SIZE;
 static long total_blocks = 0, total_nodes = 1; /* pre-count the root node */
 static int image_length = 0;
 static int super_flags = CRAMFS_FLAG_FSID_VERSION_2 | CRAMFS_FLAG_SORTED_DIRS;

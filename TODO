@@ -5,3 +5,9 @@ Quick TODO list
 - Extend selection of uncompressed and XIP files to the device table
   mechanism.
 
+- Move XIP blocks out-of-line and batch them together for all files so
+  the alignment padding will have to be inserted only once rather than
+  for every file.
+
+- Refresh discussion and references about different PAGE_SIZE values.
+
