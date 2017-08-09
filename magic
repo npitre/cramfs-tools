@@ -1,0 +1,23 @@
+For /usr/share/magic
+--------------------
+
+0	ulelong	0x28cd3d45	Linux cramfs offset 0
+>4	ulelong	x		size %d
+>8	ulelong	x		flags 0x%x
+>12	ulelong	x		future 0x%x
+>16	string	>\0		signature "%.16s"
+>32	ulelong	x		fsid.crc 0x%x
+>36	ulelong	x		fsid.edition %d
+>40	ulelong	x		fsid.blocks %d
+>44	ulelong	x		fsid.files %d
+>48	string	>\0		name "%.16s"
+512	ulelong	0x28cd3d45	Linux cramfs offset 512
+>516	ulelong	x		size %d
+>520	ulelong	x		flags 0x%x
+>524	ulelong	x		future 0x%x
+>528	string	>\0		signature "%.16s"
+>544	ulelong	x		fsid.crc 0x%x
+>548	ulelong	x		fsid.edition %d
+>552	ulelong	x		fsid.blocks %d
+>556	ulelong	x		fsid.files %d
+>560	string	>\0		name "%.16s"

@@ -1,0 +1,7 @@
+Quick TODO list
+
+- Make cramfsck aware of the new block pointer extensions.
+
+- Extend selection of uncompressed and XIP files to the device table
+  mechanism.
+
