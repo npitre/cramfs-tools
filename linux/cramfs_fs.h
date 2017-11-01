@@ -96,7 +96,7 @@ struct cramfs_super {
  * Block pointer flags
  *
  * The maximum block offset that needs to be represented is roughly:
- * 
+ *
  *   (1 << CRAMFS_OFFSET_WIDTH) * 4 +
  *   (1 << CRAMFS_SIZE_WIDTH) / PAGE_SIZE * (4 + PAGE_SIZE)
  *   = 0x11004000
@@ -108,5 +108,11 @@ struct cramfs_super {
 
 #define CRAMFS_BLK_FLAGS	( CRAMFS_BLK_FLAG_UNCOMPRESSED \
 				| CRAMFS_BLK_FLAG_DIRECT_PTR )
+
+/*
+ * Direct blocks are at least 4-byte aligned.
+ * Pointers to direct blocks are shifted down by 2 bits.
+ */
+#define CRAMFS_BLK_DIRECT_PTR_SHIFT	2
 
 #endif

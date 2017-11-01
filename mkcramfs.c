@@ -798,7 +798,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 		if (do_direct_aligned) {
 			int mask = do_direct_aligned - 1;
 			curr = (curr + mask) & ~mask;
-			blockptr_val = (curr >> 2)
+			blockptr_val = (curr >> CRAMFS_BLK_DIRECT_PTR_SHIFT)
 				     | CRAMFS_BLK_FLAG_DIRECT_PTR
 				     | CRAMFS_BLK_FLAG_UNCOMPRESSED;
 			memcpy(base + curr, data, input);
@@ -817,7 +817,8 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 			 * is included in the block data.
 			 */
 			curr = (curr + 3) & ~3;
-			blockptr_val = (curr >> 2) | CRAMFS_BLK_FLAG_DIRECT_PTR;
+			blockptr_val = (curr >> CRAMFS_BLK_DIRECT_PTR_SHIFT)
+				     | CRAMFS_BLK_FLAG_DIRECT_PTR;
 			do_compress(base + curr + 2, &len, data, input);
 			if (2 + len < input) {
 				*(u16 *)(base + curr) = len;
