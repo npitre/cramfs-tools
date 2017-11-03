@@ -162,7 +162,7 @@ static void usage(int status)
 		" -p         pad by %d bytes for boot code\n"
 		" -s         sort directory entries (old option, ignored)\n"
 		" -v         be more verbose\n"
-		" -x         use extended block pointers (requires >= 4.14?)\n"
+		" -x         use extended block pointers (requires >= 4.15)\n"
 		" -X         allow XIP of ELF files (imply -x)\n"
 		" -z         make explicit holes (requires >= 2.3.39)\n"
 		" -D         Use the named FILE as a device table file\n"

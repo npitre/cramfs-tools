@@ -41,7 +41,7 @@ This version of mkcramfs implements block pointer extensions that allows
 for uncompressed blocks and random block placementt. Currently this is
 used to avoid compressing small files that end up taking more space once
 "compressed" (enabled with mkcramfs -x). A kernel with the appropriate
-support is required.
+support is required (from Linux v4.15).
 
 It is possible to have some files, or portions of some files, kept
 uncompressed and properly aligned to allow direct mapping into user
