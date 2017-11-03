@@ -360,50 +360,127 @@ static int uncompress_block(void *src, int len)
 	return stream.total_out;
 }
 
-static void do_uncompress(char *path, int fd, unsigned long offset, unsigned long size)
+static int read_block(unsigned long offset, unsigned int block_nr,
+		      unsigned long size)
 {
-	unsigned long curr = offset + 4 * ((size + PAGE_SIZE - 1) / PAGE_SIZE);
+	unsigned long blkptr_offset = offset + block_nr * 4;
+	u32 maxblock = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+	u32 block_ptr, block_start, block_len, out;
+	int uncompressed, direct;
+
+	if (offset < start_data)
+		start_data = offset;
+
+	block_ptr = *(u32 *) romfs_read(blkptr_offset);
+	if ((block_ptr & CRAMFS_BLK_FLAGS) && !(super.flags & CRAMFS_FLAG_EXT_BLOCK_POINTERS))
+	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");	
+	uncompressed = (block_ptr & CRAMFS_BLK_FLAG_UNCOMPRESSED);
+	direct = (block_ptr & CRAMFS_BLK_FLAG_DIRECT_PTR);
+	block_ptr &= ~CRAMFS_BLK_FLAGS;
+
+	if (direct) {
+		/*
+		 * The block pointer is an absolute start pointer,
+		 * shifted by 2 bits. The size is included in the
+		 * first 2 bytes of the data block when compressed,
+		 * or PAGE_SIZE otherwise.
+		 */
+		block_start = block_ptr << CRAMFS_BLK_DIRECT_PTR_SHIFT;
+		if (block_start < start_data)
+			start_data = block_start;
+		if (uncompressed) {
+			block_len = PAGE_SIZE;
+			/* if last block: cap to file length */
+			if (block_nr == maxblock - 1)
+				block_len = size % PAGE_SIZE;
+		} else {
+			block_len = *(u16 *) romfs_read(block_start);
+			block_start += 2;
+		}
+	} else {
+		/*
+		 * The block pointer indicates one past the end of
+		 * the current block (start of next block). If this
+		 * is the first block then it starts where the block
+		 * pointer table ends, otherwise its start comes
+		 * from the previous block's pointer.
+		 */
+		block_start = offset + maxblock * 4;
+		if (block_nr)
+			block_start = *(u32 *) romfs_read(blkptr_offset - 4);
+		/* Beware... previous ptr might be a direct ptr */
+		if (block_start & CRAMFS_BLK_FLAG_DIRECT_PTR) {
+			/* See comments on earlier code. */
+			u32 prev_start = block_start;
+			block_start = prev_start & ~CRAMFS_BLK_FLAGS;
+			block_start <<= CRAMFS_BLK_DIRECT_PTR_SHIFT;
+			if (block_start < start_data)
+				start_data = block_start;
+			if (prev_start & CRAMFS_BLK_FLAG_UNCOMPRESSED) {
+				block_start += PAGE_SIZE;
+			} else {
+				block_len = *(u16 *) romfs_read(block_start);
+				block_start += 2 + block_len;
+			}
+		}
+		block_start &= ~CRAMFS_BLK_FLAGS;
+		block_len = block_ptr - block_start;
+	}
+
+	if (block_len > 2*PAGE_SIZE ||
+	    (uncompressed && block_len > PAGE_SIZE))
+		die(FSCK_UNCORRECTED, 0, "block too large (%d bytes)", block_len);
+	if (block_start + block_len > end_data)
+		end_data = block_start + block_len;
+
+	if (block_len == 0) {
+		/* hole */
+		out = PAGE_SIZE;
+		/* if last block: cap to file length */
+		if (block_nr == maxblock - 1)
+			out = size % PAGE_SIZE;
+		if (opt_verbose > 1)
+			printf("  hole at %d (%d)\n", block_start, out);
+		memset(outbuffer, 0x00, out);
+	} else if (uncompressed) {
+		if (opt_verbose > 1)
+			printf("  non-compressed %sblock at %d to %d (%d)\n",
+			       direct ? "direct " : "",
+			       block_start, block_start + block_len, block_len);
+		memcpy(outbuffer, romfs_read(block_start), block_len);
+		out = block_len;
+	} else {
+		if (opt_verbose > 1)
+			printf("  uncompressing %sblock at %d to %d (%d)\n",
+			       direct ? "direct " : "",
+			       block_start, block_start + block_len, block_len);
+		out = uncompress_block(romfs_read(block_start), block_len);
+	}
+	return out;
+}
+
+static void do_extract(char *path, int fd, unsigned long offset, unsigned long size)
+{
+	unsigned long left = size;
+	unsigned int block_nr = 0;
 
 	do {
-		unsigned long out = PAGE_SIZE;
-		unsigned long next = *(u32 *) romfs_read(offset);
-
-		if (next > end_data) {
-			end_data = next;
-		}
-
-		offset += 4;
-		if (curr == next) {
-			if (opt_verbose > 1) {
-				printf("  hole at %ld (%d)\n", curr, PAGE_SIZE);
-			}
-			if (size < PAGE_SIZE)
-				out = size;
-			memset(outbuffer, 0x00, out);
-		}
-		else {
-			if (opt_verbose > 1) {
-				printf("  uncompressing block at %ld to %ld (%ld)\n", curr, next, next - curr);
-			}
-			out = uncompress_block(romfs_read(curr), next - curr);
-		}
-		if (size >= PAGE_SIZE) {
-			if (out != PAGE_SIZE) {
+		unsigned long out = read_block(offset, block_nr, size);
+		if (left >= PAGE_SIZE) {
+			if (out != PAGE_SIZE)
 				die(FSCK_UNCORRECTED, 0, "non-block (%ld) bytes", out);
-			}
 		} else {
-			if (out != size) {
-				die(FSCK_UNCORRECTED, 0, "non-size (%ld vs %ld) bytes", out, size);
-			}
+			if (out != left)
+				die(FSCK_UNCORRECTED, 0, "non-size (%ld vs %ld) bytes", out, left);
 		}
-		size -= out;
+		left -= out;
 		if (opt_extract) {
 			if (write(fd, outbuffer, out) < 0) {
 				die(FSCK_ERROR, 1, "write failed: %s", path);
 			}
 		}
-		curr = next;
-	} while (size);
+		block_nr++;
+	} while (left);
 }
 
 static void change_file_status(char *path, struct cramfs_inode *i)
@@ -517,7 +594,7 @@ static void do_file(char *path, struct cramfs_inode *i)
 		}
 	}
 	if (i->size) {
-		do_uncompress(path, fd, offset, i->size);
+		do_extract(path, fd, offset, i->size);
 	}
 	if (opt_extract) {
 		close(fd);
@@ -528,8 +605,6 @@ static void do_file(char *path, struct cramfs_inode *i)
 static void do_symlink(char *path, struct cramfs_inode *i)
 {
 	unsigned long offset = i->offset << 2;
-	unsigned long curr = offset + 4;
-	unsigned long next = *(u32 *) romfs_read(offset);
 	unsigned long size;
 
 	if (offset == 0) {
@@ -539,14 +614,7 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 		die(FSCK_UNCORRECTED, 0, "symbolic link has zero size");
 	}
 
-	if (offset < start_data) {
-		start_data = offset;
-	}
-	if (next > end_data) {
-		end_data = next;
-	}
-
-	size = uncompress_block(romfs_read(curr), next - curr);
+	size = read_block(offset, 0, i->size);
 	if (size != i->size) {
 		die(FSCK_UNCORRECTED, 0, "size error in symlink: %s", path);
 	}
@@ -556,9 +624,6 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 
 		asprintf(&str, "%s -> %s", path, outbuffer);
 		print_node('l', i, str);
-		if (opt_verbose > 1) {
-			printf("  uncompressing block at %ld to %ld (%ld)\n", curr, next, next - curr);
-		}
 		free(str);
 	}
 	if (opt_extract) {
