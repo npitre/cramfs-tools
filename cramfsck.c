@@ -606,6 +606,7 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 {
 	unsigned long offset = i->offset << 2;
 	unsigned long size;
+	int orig_opt_verbose;
 
 	if (offset == 0) {
 		die(FSCK_UNCORRECTED, 0, "symbolic link has zero offset");
@@ -614,7 +615,11 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 		die(FSCK_UNCORRECTED, 0, "symbolic link has zero size");
 	}
 
+	/* verbosity hack to provide proper output ordering */
+	orig_opt_verbose = opt_verbose;
+	opt_verbose = 0;
 	size = read_block(offset, 0, i->size);
+	opt_verbose = orig_opt_verbose;
 	if (size != i->size) {
 		die(FSCK_UNCORRECTED, 0, "size error in symlink: %s", path);
 	}
@@ -625,6 +630,8 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 		asprintf(&str, "%s -> %s", path, outbuffer);
 		print_node('l', i, str);
 		free(str);
+		/* once again with verbose on */
+		read_block(offset, 0, i->size);
 	}
 	if (opt_extract) {
 		if (symlink(outbuffer, path) < 0) {
