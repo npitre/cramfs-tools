@@ -101,7 +101,7 @@ static void expand_fs(char *, struct cramfs_inode *);
 #endif /* INCLUDE_FS_TESTS */
 
 /* Input status of 0 to print help and exit without an error. */
-static void usage(int status)
+static void __attribute__((noreturn)) usage(int status)
 {
 	FILE *stream = status ? stderr : stdout;
 

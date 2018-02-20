@@ -33,6 +33,7 @@
 
 #define _GNU_SOURCE
 #include <sys/types.h>
+#include <sys/sysmacros.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -149,7 +150,7 @@ struct entry {
 };
 
 /* Input status of 0 to print help and exit without an error. */
-static void usage(int status)
+static void __attribute__((noreturn)) usage(int status)
 {
 	FILE *stream = status ? stderr : stdout;
 
@@ -569,7 +570,7 @@ static void set_data_offset(struct entry *entry, unsigned char *base, unsigned l
  */
 static void print_node(struct entry *e)
 {
-	char info[12];
+	char info[20];
 	char type = '?';
 
 	if (S_ISREG(e->mode)) type = 'f';
@@ -582,11 +583,11 @@ static void print_node(struct entry *e)
 
 	if (S_ISCHR(e->mode) || (S_ISBLK(e->mode))) {
 		/* major/minor numbers can be as high as 2^12 or 4096 */
-		snprintf(info, 11, "%4d,%4d", major(e->size), minor(e->size));
+		snprintf(info, sizeof(info), "%4d,%4d", major(e->size), minor(e->size));
 	}
 	else {
 		/* size be as high as 2^24 or 16777216 */
-		snprintf(info, 11, "%9d", e->size);
+		snprintf(info, sizeof(info), "%9d", e->size);
 	}
 
 	printf("%c %04o %s %5d:%-3d %s\n",
