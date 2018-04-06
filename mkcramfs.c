@@ -512,6 +512,51 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 	return totalsize;
 }
 
+static void fs_store_bytes(void *dst, void *src, unsigned int size)
+{
+	memcpy(dst, src, size);
+}
+
+static void fs_store_u16(void *dst, u16 val)
+{
+	*(u16 *)dst = val;
+}
+
+static void fs_store_u32(void *dst, u32 val)
+{
+	*(u32 *)dst = val;
+}
+
+static void fs_store_mode(struct cramfs_inode *inode, u32 val)
+{
+	inode->mode = val;
+}
+
+static void fs_store_uid(struct cramfs_inode *inode, u32 val)
+{
+	inode->uid = val;
+}
+
+static void fs_store_gid(struct cramfs_inode *inode, u32 val)
+{
+	inode->gid = val;
+}
+
+static void fs_store_size(struct cramfs_inode *inode, u32 val)
+{
+	inode->size = val;
+}
+
+static void fs_store_namelen(struct cramfs_inode *inode, u32 val)
+{
+	inode->namelen = val;
+}
+
+static void fs_store_offset(struct cramfs_inode *inode, u32 val)
+{
+	inode->offset = val;
+}
+
 /* Returns sizeof(struct cramfs_super), which includes the root inode. */
 static unsigned int write_superblock(struct entry *root, unsigned char *base,
 				     int size)
@@ -523,17 +568,17 @@ static unsigned int write_superblock(struct entry *root, unsigned char *base,
 		offset += opt_pad;	/* 0 if no padding */
 	}
 
-	super->magic = CRAMFS_MAGIC;
-	super->flags = super_flags;
+	fs_store_u32(&super->magic, CRAMFS_MAGIC);
 	if (image_length > 0)
-		super->flags |= CRAMFS_FLAG_SHIFTED_ROOT_OFFSET;
-	super->size = size;
+		super_flags |= CRAMFS_FLAG_SHIFTED_ROOT_OFFSET;
+	fs_store_u32(&super->flags, super_flags);
+	fs_store_u32(&super->size, size);
 	memcpy(super->signature, CRAMFS_SIGNATURE, sizeof(super->signature));
 
-	super->fsid.crc = crc32(0L, Z_NULL, 0);
-	super->fsid.edition = opt_edition;
-	super->fsid.blocks = total_blocks;
-	super->fsid.files = total_nodes;
+	fs_store_u32(&super->fsid.crc, crc32(0L, Z_NULL, 0));
+	fs_store_u32(&super->fsid.edition, opt_edition);
+	fs_store_u32(&super->fsid.blocks, total_blocks);
+	fs_store_u32(&super->fsid.files, total_nodes);
 
 	memset(super->name, 0x00, sizeof(super->name));
 	if (opt_name)
@@ -541,11 +586,12 @@ static unsigned int write_superblock(struct entry *root, unsigned char *base,
 	else
 		strncpy((char *)super->name, "Compressed", sizeof(super->name));
 
-	super->root.mode = root->mode;
-	super->root.uid = root->uid;
-	super->root.gid = root->gid;
-	super->root.size = root->size;
-	super->root.offset = offset >> 2;
+	fs_store_mode(&super->root, root->mode);
+	fs_store_uid(&super->root, root->uid);
+	fs_store_gid(&super->root, root->gid);
+	fs_store_size(&super->root, root->size);
+	fs_store_namelen(&super->root, 0);
+	fs_store_offset(&super->root, offset >> 2);
 
 	return offset;
 }
@@ -560,7 +606,7 @@ static void set_data_offset(struct entry *entry, unsigned char *base, unsigned l
 	if (offset >= (1 << (2 + CRAMFS_OFFSET_WIDTH))) {
 		error_msg_and_die("filesystem too big");
 	}
-	inode->offset = (offset >> 2);
+	fs_store_offset(inode, offset >> 2);
 }
 
 /*
@@ -615,23 +661,23 @@ static unsigned int write_directory_structure(struct entry *entry,
 
 			entry->dir_offset = offset;
 
-			inode->mode = entry->mode;
-			inode->uid = entry->uid;
-			inode->gid = entry->gid;
-			inode->size = entry->size;
-			inode->offset = 0;
+			fs_store_mode(inode, entry->mode);
+			fs_store_uid(inode, entry->uid);
+			fs_store_gid(inode, entry->gid);
+			fs_store_size(inode, entry->size);
+			fs_store_offset(inode, 0);
 			/* Non-empty directories, regfiles and symlinks will
 			   write over inode->offset later. */
 
 			offset += sizeof(struct cramfs_inode);
 			total_nodes++;	/* another node */
-			memcpy(base + offset, entry->name, len);
+			fs_store_bytes(base + offset, entry->name, len);
 			/* Pad up the name to a 4-byte boundary */
 			while (len & 3) {
 				*(base + offset + len) = '\0';
 				len++;
 			}
-			inode->namelen = len >> 2;
+			fs_store_namelen(inode, len >> 2);
 			offset += len;
 
 			if (opt_verbose)
@@ -740,14 +786,17 @@ static int is_elf_loadable(struct entry *entry, unsigned int offset,
 	return 0;
 }
 	
-static void do_compress(unsigned char *outbuf, unsigned long *outsize_p,
-			unsigned char *inbuf, unsigned long insize)
+static unsigned int fs_store_compressed(unsigned char *outbuf,
+					unsigned char *inbuf,
+					unsigned int size)
 {
+	unsigned long insize = size, outsize = 2 * blksize;
 	int ret;
 
-	ret = compress2(outbuf, outsize_p, inbuf, insize, Z_BEST_COMPRESSION);
+	ret = compress2(outbuf, &outsize, inbuf, insize, Z_BEST_COMPRESSION);
 	if (ret != Z_OK)
 		error_msg_and_die("compression error: %s\n", zError(ret));
+	return outsize;
 }
 
 /*
@@ -771,7 +820,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 	do {
 		u32 blockptr_val;
 		unsigned int do_direct_aligned = 0;
-		unsigned long len = 2 * blksize;
+		unsigned long len;
 		unsigned int input = size;
 		if (input > blksize)
 			input = blksize;
@@ -802,7 +851,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 			blockptr_val = (curr >> CRAMFS_BLK_DIRECT_PTR_SHIFT)
 				     | CRAMFS_BLK_FLAG_DIRECT_PTR
 				     | CRAMFS_BLK_FLAG_UNCOMPRESSED;
-			memcpy(base + curr, data, input);
+			fs_store_bytes(base + curr, data, input);
 			if (opt_verbose > 2)
 				printf("XIP at %#x for file offset %#x\n",
 				       curr, entry->size - size);
@@ -820,9 +869,9 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 			curr = (curr + 3) & ~3;
 			blockptr_val = (curr >> CRAMFS_BLK_DIRECT_PTR_SHIFT)
 				     | CRAMFS_BLK_FLAG_DIRECT_PTR;
-			do_compress(base + curr + 2, &len, data, input);
+			len = fs_store_compressed(base + curr + 2, data, input);
 			if (2 + len < input) {
-				*(u16 *)(base + curr) = len;
+				fs_store_u16(base + curr, len);
 				curr += 2 + len;
 			} else {
 				/*
@@ -831,7 +880,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 				 * uncompressed block instead.
 				 */
 				len = input;
-				memcpy(base + curr, data, len);
+				fs_store_bytes(base + curr, data, len);
 				curr += len;
 				blockptr_val |= CRAMFS_BLK_FLAG_UNCOMPRESSED;
 			}
@@ -842,14 +891,14 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 			 * do uncompressed blocks if allowed and beneficial.
 			 */
 			unsigned int flags = 0;
-			do_compress(base + curr, &len, data, input);
+			len = fs_store_compressed(base + curr, data, input);
 			if (opt_extblkptr && len >= input) {
 				/* Better keep it uncompressed */
 				if (opt_verbose > 2)
 					printf("literal %d vs compressed %ld\n",
 						input, len);
 				len = input;
-				memcpy(base + curr, data, len);
+				fs_store_bytes(base + curr, data, len);
 				flags = CRAMFS_BLK_FLAG_UNCOMPRESSED;
 			}
 			curr += len;
@@ -858,7 +907,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 
 		data += input;
 		size -= input;
-		*(u32 *) (base + offset) = blockptr_val;
+		fs_store_u32(base + offset, blockptr_val);
 		offset += 4;
 		if (blockptr_val & CRAMFS_BLK_FLAGS)
 			super_flags |= CRAMFS_FLAG_EXT_BLOCK_POINTERS;
@@ -919,7 +968,7 @@ static unsigned int write_file(char *file, unsigned char *base,
 	if (buf == MAP_FAILED) {
 		error_msg_and_die("mmap failed");
 	}
-	memcpy(base + offset, buf, image_length);
+	fs_store_bytes(base + offset, buf, image_length);
 	munmap(buf, image_length);
 	close (fd);
 	/* Pad up the image_length to a 4-byte boundary */
@@ -1263,6 +1312,7 @@ int main(int argc, char **argv)
 	loff_t fslen_ub = sizeof(struct cramfs_super);
 	char const *dirname, *outfile;
 	u32 crc;
+	struct cramfs_info *fsid;
 	int c;			/* for getopt */
 	char *ep;		/* for strtoul */
 	FILE *devtable = NULL;
@@ -1417,7 +1467,8 @@ int main(int argc, char **argv)
 	/* Put the checksum in. */
 	crc = crc32(0L, Z_NULL, 0);
 	crc = crc32(crc, (rom_image+opt_pad), (offset-opt_pad));
-	((struct cramfs_super *) (rom_image+opt_pad))->fsid.crc = crc;
+	fsid = &((struct cramfs_super *) (rom_image+opt_pad))->fsid;
+	fs_store_u32(&fsid->crc, crc);
 	if (opt_verbose)
 	printf("CRC: %x\n", crc);
 
