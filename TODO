@@ -9,3 +9,4 @@ Quick TODO list
 
 - Refresh discussion and references about different PAGE_SIZE values.
 
+- Add cross-endian support to cramfsck.

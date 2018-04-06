@@ -54,6 +54,8 @@
 #include <dmalloc.h>
 #endif
 #include <elf.h>
+#include <endian.h>
+#include <byteswap.h>
 
 /* Exit codes used by mkfs-type programs */
 #define MKFS_OK          0	/* No errors */
@@ -121,6 +123,7 @@ static int opt_squash = 0;
 static int opt_verbose = 0;
 static int opt_xip = 0;
 static int opt_xip_mmu = 0;
+static int opt_bswap = 0;
 static char *opt_image = NULL;
 static char *opt_name = NULL;
 
@@ -168,6 +171,8 @@ static void __attribute__((noreturn)) usage(int status)
 		" -z         make explicit holes (requires >= 2.3.39)\n"
 		" -D         Use the named FILE as a device table file\n"
 		" -q         squash permissions (make everything owned by root)\n"
+		" -B         force big-endian filesystem creation\n"
+		" -L         force little-endian filesystem creation\n"
 		" dirname    root of the filesystem to be compressed\n"
 		" outfile    output file\n", progname, PAD_SIZE);
 
@@ -519,21 +524,29 @@ static void fs_store_bytes(void *dst, void *src, unsigned int size)
 
 static void fs_store_u16(void *dst, u16 val)
 {
+	if (opt_bswap)
+		val = bswap_16(val);
 	*(u16 *)dst = val;
 }
 
 static void fs_store_u32(void *dst, u32 val)
 {
+	if (opt_bswap)
+		val = bswap_32(val);
 	*(u32 *)dst = val;
 }
 
 static void fs_store_mode(struct cramfs_inode *inode, u32 val)
 {
+	if (opt_bswap)
+		val = bswap_16(val);
 	inode->mode = val;
 }
 
 static void fs_store_uid(struct cramfs_inode *inode, u32 val)
 {
+	if (opt_bswap)
+		val = bswap_16(val);
 	inode->uid = val;
 }
 
@@ -544,17 +557,53 @@ static void fs_store_gid(struct cramfs_inode *inode, u32 val)
 
 static void fs_store_size(struct cramfs_inode *inode, u32 val)
 {
+	if (opt_bswap)
+		val = bswap_32(val << (32 - CRAMFS_SIZE_WIDTH));
 	inode->size = val;
 }
 
+/*
+ * The namelen and offset fields don't fall on a byte boundary and
+ * must be treated specially when switching endianness.
+ */
+#define CRAMFS__OFFSET0_WIDTH	(8 - CRAMFS_NAMELEN_WIDTH)
+#define CRAMFS__OFFSET1_WIDTH	(CRAMFS_OFFSET_WIDTH - CRAMFS__OFFSET0_WIDTH)
+struct cramfs_inode_bswap {
+	u32 __pad[2];
+	u32 _offset0:CRAMFS__OFFSET0_WIDTH;
+	u32 _namelen:CRAMFS_NAMELEN_WIDTH;
+	u32 _offset1:CRAMFS__OFFSET1_WIDTH;
+};
+
 static void fs_store_namelen(struct cramfs_inode *inode, u32 val)
 {
-	inode->namelen = val;
+	if (opt_bswap) {
+		struct cramfs_inode_bswap *__inode = (void *)inode;
+		__inode->_namelen = val;
+	} else {
+		inode->namelen = val;
+	}
 }
 
 static void fs_store_offset(struct cramfs_inode *inode, u32 val)
 {
-	inode->offset = val;
+	if (opt_bswap) {
+		struct cramfs_inode_bswap *__inode = (void *)inode;
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+		__inode->_offset0 = val >> CRAMFS__OFFSET1_WIDTH;
+		val = bswap_32(val << (32 - CRAMFS__OFFSET1_WIDTH));
+		__inode->_offset1 = val;
+#elif __BYTE_ORDER == __BIG_ENDIAN
+		__inode->_offset0 = val;
+		val >>= CRAMFS__OFFSET0_WIDTH;
+		val = bswap_32(val << (32 - CRAMFS__OFFSET1_WIDTH));
+		__inode->_offset1 = val;
+#else
+#error "unknown endianness"
+#endif
+	} else {
+		inode->offset = val;
+	}
 }
 
 /* Returns sizeof(struct cramfs_super), which includes the root inode. */
@@ -1323,7 +1372,7 @@ int main(int argc, char **argv)
 		progname = argv[0];
 
 	/* command line options */
-	while ((c = getopt(argc, argv, "hEe:i:n:psvxXzD:q")) != EOF) {
+	while ((c = getopt(argc, argv, "hEe:i:n:psvxXzD:qBL")) != EOF) {
 		switch (c) {
 		case 'h':
 			usage(MKFS_OK);
@@ -1379,6 +1428,18 @@ int main(int argc, char **argv)
 			if (st.st_size < 10)
 				error_msg_and_die("%s: not a proper device table file\n", optarg);
 			break;
+
+		case 'B':
+			#if __BYTE_ORDER != __BIG_ENDIAN
+			opt_bswap = 1;
+			#endif
+			break;
+
+		case 'L':
+			#if __BYTE_ORDER != __LITTLE_ENDIAN
+			opt_bswap = 1;
+			#endif
+			break;
 		}
 	}
 
@@ -1432,6 +1493,10 @@ int main(int argc, char **argv)
 
 	if (rom_image == MAP_FAILED) {
 		error_msg_and_die("mmap failed");
+	}
+
+	if (opt_bswap && opt_verbose) {
+		printf("Filesystem data will be endian swapped\n");
 	}
 
 	/* Skip the first opt_pad bytes for boot loader code */
