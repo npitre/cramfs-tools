@@ -33,7 +33,6 @@
 
 #define _GNU_SOURCE
 #include <sys/types.h>
-#include <sys/sysmacros.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -53,9 +52,25 @@
 #ifdef DMALLOC
 #include <dmalloc.h>
 #endif
+#ifndef __APPLE__
+#include <sys/sysmacros.h>
 #include <elf.h>
 #include <endian.h>
 #include <byteswap.h>
+#else
+#define loff_t off_t
+#define bswap_16(value) \
+((((value) & 0xff) << 8) | ((value) >> 8))
+
+#define bswap_32(value) \
+(((uint32_t)bswap_16((uint16_t)((value) & 0xffff)) << 16) | \
+(uint32_t)bswap_16((uint16_t)((value) >> 16)))
+
+// these constants mean nothing
+#define PF_R 1
+#define PF_W 2
+#define PF_X 3
+#endif
 
 /* Exit codes used by mkfs-type programs */
 #define MKFS_OK          0	/* No errors */
@@ -804,6 +819,7 @@ static int is_zero(unsigned char const *begin, unsigned len)
 static int is_elf_loadable(struct entry *entry, unsigned int offset,
 			   int flags_set, int flags_clear)
 {
+#ifndef __APPLE__
 	Elf32_Ehdr *hdr;
 	Elf32_Phdr *phdr;
 	int i, flags;
@@ -831,7 +847,7 @@ static int is_elf_loadable(struct entry *entry, unsigned int offset,
 		if ((flags & flags_set) && !(flags & flags_clear))
 			return 1;
 	}
-
+#endif
 	return 0;
 }
 	
