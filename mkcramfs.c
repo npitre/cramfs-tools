@@ -630,9 +630,12 @@ static unsigned int write_superblock(struct entry *root, unsigned char *base,
 	fs_store_u32(&super->fsid.files, total_nodes);
 
 	memset(super->name, 0x00, sizeof(super->name));
-	if (opt_name)
-		strncpy((char *)super->name, opt_name, sizeof(super->name));
-	else
+	if (opt_name) {
+		unsigned l = strlen(opt_name);
+		if (l > sizeof(super->name))
+			l = sizeof(super->name);
+		memcpy(super->name, opt_name, l);
+	} else
 		strncpy((char *)super->name, "Compressed", sizeof(super->name));
 
 	fs_store_mode(&super->root, root->mode);
