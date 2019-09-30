@@ -104,7 +104,7 @@ Tools
 -----
 
 The cramfs user-space tools, including mkcramfs and cramfsck, are
-located at <http://sourceforge.net/projects/cramfs/>.
+located at <https://github.com/npitre/cramfs-tools>.
 
 
 Future Development
@@ -190,8 +190,6 @@ block size, but that just means adding and parsing a -b option.
 Inode Size
 ----------
 
-Given that cramfs will probably be used for CDs etc. as well as just
-silicon ROMs, it might make sense to expand the inode a little from
-its current 12 bytes.  Inodes other than the root inode are followed
-by filename, so the expansion doesn't even have to be a multiple of 4
-bytes.
+It might make sense to expand the inode a little from its current
+12 bytes. Inodes other than the root inode are followed by filename,
+so the expansion doesn't even have to be a multiple of 4 bytes.

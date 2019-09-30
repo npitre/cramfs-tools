@@ -8,5 +8,3 @@ Quick TODO list
   for every file.
 
 - Refresh discussion and references about different PAGE_SIZE values.
-
-- Add cross-endian support to cramfsck.
