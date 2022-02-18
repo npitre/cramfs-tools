@@ -81,6 +81,7 @@
 #define PAD_SIZE 512
 
 /* The kernel assumes PAGE_SIZE as block size. */
+#undef PAGE_SIZE
 #define PAGE_SIZE (4096)
 
 /*
