@@ -1547,7 +1547,7 @@ int main(int argc, char **argv)
 	/* Write the superblock now that we can fill in all of the fields. */
 	write_superblock(root_entry, rom_image+opt_pad, offset);
 	if (opt_verbose)
-		printf("Super block: %ld bytes\n", sizeof(struct cramfs_super));
+		printf("Super block: %zd bytes\n", sizeof(struct cramfs_super));
 
 	/* Put the checksum in. */
 	crc = crc32(0L, Z_NULL, 0);
