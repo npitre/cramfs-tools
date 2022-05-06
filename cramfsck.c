@@ -77,6 +77,8 @@ static int fd;			/* ROM image file descriptor */
 static char *filename;		/* ROM image filename */
 struct cramfs_super super;	/* just find the cramfs superblock once */
 static int opt_verbose = 0;	/* 1 = verbose (-v), 2+ = very verbose (-vv) */
+static int opt_continue = 0; /* 1 = continue on error for diagnositc / recovery */
+static int log_errors_continue = 0; /* number of errors we encountered */
 #ifdef INCLUDE_FS_TESTS
 static int opt_extract = 0;		/* extract cramfs (-x) */
 static char *extract_dir = "/";	/* extraction directory (-x) */
@@ -112,6 +114,7 @@ static void __attribute__((noreturn)) usage(int status)
 		" -h         print this help\n"
 		" -x dir     extract into dir\n"
 		" -v         be more verbose\n"
+		" -c         continue on failure\n"
 		" file       file to test\n", progname);
 
 	exit(status);
@@ -131,7 +134,11 @@ static void die(int status, int syserr, const char *fmt, ...)
 	}
 	fprintf(stderr, "\n");
 	va_end(arg_ptr);
-	exit(status);
+	if (opt_continue > 0) {
+		log_errors_continue++;
+	} else {
+		exit(status);
+    }
 }
 
 static void test_super(int *start, size_t *length) {
@@ -744,7 +751,7 @@ int main(int argc, char **argv)
 		progname = argv[0];
 
 	/* command line options */
-	while ((c = getopt(argc, argv, "hx:v")) != EOF) {
+	while ((c = getopt(argc, argv, "hx:vc")) != EOF) {
 		switch (c) {
 		case 'h':
 			usage(FSCK_OK);
@@ -758,6 +765,9 @@ int main(int argc, char **argv)
 #endif /* not INCLUDE_FS_TESTS */
 		case 'v':
 			opt_verbose++;
+			break;
+		case 'c':
+			opt_continue++;
 			break;
 		}
 	}
@@ -774,6 +784,10 @@ int main(int argc, char **argv)
 
 	if (opt_verbose) {
 		printf("%s: OK\n", filename);
+	}
+
+	if ((opt_verbose > 0) && (opt_continue > 0) && (log_errors_continue > 0)) {
+		printf("%s: extraction with %d errors encountered\n", filename, log_errors_continue);
 	}
 
 	exit(FSCK_OK);
