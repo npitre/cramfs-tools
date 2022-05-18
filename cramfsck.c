@@ -790,7 +790,11 @@ int main(int argc, char **argv)
 		printf("%s: extraction with %d errors encountered\n", filename, log_errors_continue);
 	}
 
-	exit(FSCK_OK);
+	if (log_errors_continue > 0) {
+		exit(FSCK_UNCORRECTED);
+	} else {
+		exit(FSCK_OK);
+	}
 }
 
 /*
