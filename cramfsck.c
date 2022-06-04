@@ -79,6 +79,7 @@ struct cramfs_super super;	/* just find the cramfs superblock once */
 static int opt_verbose = 0;	/* 1 = verbose (-v), 2+ = very verbose (-vv) */
 static int opt_continue = 0; /* 1 = continue on error for diagnositc / recovery */
 static int log_errors_continue = 0; /* number of errors we encountered */
+static int log_errors_result = FSCK_OK;
 #ifdef INCLUDE_FS_TESTS
 static int opt_extract = 0;		/* extract cramfs (-x) */
 static char *extract_dir = "/";	/* extraction directory (-x) */
@@ -136,6 +137,7 @@ static void die(int status, int syserr, const char *fmt, ...)
 	va_end(arg_ptr);
 	if (opt_continue > 0) {
 		log_errors_continue++;
+        log_errors_result |= status;
 	} else {
 		exit(status);
     }
@@ -791,7 +793,7 @@ int main(int argc, char **argv)
 	}
 
 	if (log_errors_continue > 0) {
-		exit(FSCK_UNCORRECTED);
+		exit(log_errors_result);
 	} else {
 		exit(FSCK_OK);
 	}
