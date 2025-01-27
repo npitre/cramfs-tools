@@ -63,3 +63,7 @@ Hacker Notes
 ------------
 
 See fs/cramfs/README for filesystem layout and implementation notes.
+
+Altered cramfs inode representations exist in the field, presumably as an
+attempt by some vendor at obfuscating their firmware images. Please see
+https://github.com/npitre/cramfs-tools/issues/10 for details.
