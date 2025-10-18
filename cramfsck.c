@@ -30,7 +30,7 @@
  * 2000/07/15: Daniel Quinlan (initial support for block devices)
  * 2002/01/10: Daniel Quinlan (additional checks, test more return codes,
  *                            use read if mmap fails, standardize messages)
- */
+  */
 
 /* compile-time options */
 #define INCLUDE_FS_TESTS	/* include cramfs checking and extraction */
@@ -385,7 +385,7 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 
 	block_ptr = *(u32 *) romfs_read(blkptr_offset);
 	if ((block_ptr & CRAMFS_BLK_FLAGS) && !(super.flags & CRAMFS_FLAG_EXT_BLOCK_POINTERS))
-	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");	
+	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");
 	uncompressed = (block_ptr & CRAMFS_BLK_FLAG_UNCOMPRESSED);
 	direct = (block_ptr & CRAMFS_BLK_FLAG_DIRECT_PTR);
 	block_ptr &= ~CRAMFS_BLK_FLAGS;
