@@ -295,7 +295,7 @@ static FILE *xfopen(const char *path, const char *mode)
 extern int xopen(const char *pathname, int flags, mode_t mode)
 {
 	int ret;
-	
+
 	if (flags & O_CREAT)
 		ret = open(pathname, flags, mode);
 	else
@@ -307,10 +307,10 @@ extern int xopen(const char *pathname, int flags, mode_t mode)
 }
 
 extern char *xreadlink(const char *path)
-{                       
+{
 	static const int GROWBY = 80; /* how large we will grow strings by */
 
-	char *buf = NULL;   
+	char *buf = NULL;
 	int bufsize = 0, readsize = 0;
 
 	do {
@@ -320,13 +320,13 @@ extern char *xreadlink(const char *path)
 		    perror_msg("%s:%s", progname, path);
 		    return NULL;
 		}
-	}           
+	}
 	while (bufsize < readsize + 1);
 
 	buf[readsize] = '\0';
 
 	return buf;
-}       
+}
 
 static void map_entry(struct entry *entry)
 {
@@ -377,7 +377,7 @@ static int find_identical_file(struct entry *orig, struct entry *newfile)
 		find_identical_file(orig->next, newfile));
 }
 
-static void eliminate_doubles(struct entry *root, struct entry *orig) 
+static void eliminate_doubles(struct entry *root, struct entry *orig)
 {
 	if (orig) {
 		if (orig->size && (orig->path || orig->uncompressed))
@@ -854,7 +854,7 @@ static int is_elf_loadable(struct entry *entry, unsigned int offset,
 #endif
 	return 0;
 }
-	
+
 static unsigned int fs_store_compressed(unsigned char *outbuf,
 					unsigned char *inbuf,
 					unsigned int size)
@@ -884,7 +884,7 @@ static unsigned int write_blocks(unsigned char *base, unsigned int offset, struc
 	unsigned int curr = offset + 4 * blocks;
 	unsigned char *data = entry->uncompressed;
 
-	total_blocks += blocks; 
+	total_blocks += blocks;
 
 	do {
 		u32 blockptr_val;
@@ -1087,12 +1087,12 @@ static struct entry *find_filesystem_entry(struct entry *dir, char *name, mode_t
 	return (NULL);
 }
 
-void modify_entry(char *full_path, unsigned long uid, unsigned long gid, 
+void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
 	unsigned long mode, unsigned long rdev, struct entry *root, loff_t *fslen_ub)
 {
 	char *name, *path, *full;
 	struct entry *curr, *parent, *entry, *prev;
-	
+
 	full = xstrdup(full_path);
 	path = xstrdup(dirname(full));
 	name = full_path + strlen(path) + 1;
@@ -1110,7 +1110,7 @@ void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
 		entry->uid = uid;
 		entry->gid = gid;
 	} else { /* make a new entry */
-	
+
 		/* code partially replicated from parse_directory() */
 		size_t namelen;
 		if (S_ISREG(mode)) {
@@ -1149,7 +1149,7 @@ void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
 			if (entry->size & -(1<<CRAMFS_SIZE_WIDTH))
 				warn_dev = 1;
 		}
-		
+
 		/* ok, now we have to backup and correct the size of all the entries above us */
 		*fslen_ub += sizeof(struct cramfs_inode) + ((namelen + 3) & ~3);
 		parent->size += sizeof(struct cramfs_inode) + ((namelen + 3) & ~3);
@@ -1180,7 +1180,7 @@ void modify_entry(char *full_path, unsigned long uid, unsigned long gid,
 }
 
 /* the GNU C library has a wonderful scanf("%as", string) which will
- allocate the string with the right size, good to avoid buffer overruns. 
+ allocate the string with the right size, good to avoid buffer overruns.
  the following macros use it if available or use a hacky workaround...
  */
 
@@ -1208,7 +1208,7 @@ inline int snprintf(char *str, size_t n, const char *fmt, ...)
     <path>	<type> <mode>	<uid>	<gid>	<major>	<minor>	<start>	<inc>	<count>
     /dev/mem     c    640       0       0         1       1       0     0         -
 
-    type can be one of: 
+    type can be one of:
 	f	A regular file
 	d	Directory
 	c	Character special device file
@@ -1230,7 +1230,7 @@ static int interpret_table_entry(char *line, struct entry *root, loff_t *fslen_u
 
 	if (sscanf (line, "%" SCANF_PREFIX "s %c %lo %lu %lu %lu %lu %lu %lu %lu",
 		 SCANF_STRING(name), &type, &mode, &uid, &gid, &major, &minor,
-		 &start, &increment, &count) < 0) 
+		 &start, &increment, &count) < 0)
 	{
 		return 1;
 	}
@@ -1261,7 +1261,9 @@ static int interpret_table_entry(char *line, struct entry *root, loff_t *fslen_u
 			dev_t rdev;
 
 			for (i = start; i < count; i++) {
-				asprintf(&buf, "%s%lu", name, i);
+				if ( asprintf(&buf, "%s%lu", name, i) < 0 ) {
+					perror_msg_and_die("asprintf failed");
+				}
 				rdev = makedev(major, minor + (i * increment - start));
 				modify_entry(buf, uid, gid, mode, rdev, root, fslen_ub);
 				free(buf);
@@ -1330,7 +1332,7 @@ void traverse(struct entry *entry, int depth)
 	while (curr) {
 		for (i = 0; i < depth; i++) putchar(' ');
 		printf("%s: size=%d mode=%d same=%p\n",
-			(curr->name)? (char*)curr->name : "/", 
+			(curr->name)? (char*)curr->name : "/",
 			curr->size, curr->mode, curr->same);
 		if (curr->child) traverse(curr->child, depth + 4);
 		curr = curr->next;
@@ -1570,7 +1572,7 @@ int main(int argc, char **argv)
 	if (offset != written) {
 		error_msg_and_die("ROM image write failed (wrote %d of %d bytes)", written, offset);
 	}
-	
+
 	/* Free up memory */
 	free_filesystem_entry(root_entry);
 	free(root_entry);

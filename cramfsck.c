@@ -30,10 +30,20 @@
  * 2000/07/15: Daniel Quinlan (initial support for block devices)
  * 2002/01/10: Daniel Quinlan (additional checks, test more return codes,
  *                            use read if mmap fails, standardize messages)
- */
+  */
 
 /* compile-time options */
 #define INCLUDE_FS_TESTS	/* include cramfs checking and extraction */
+
+/* extra low level verbosity */
+#define DEVEL_NONE			0
+#define DEVEL_SUCCESS		(1<<0)
+#define DEVEL_SWAP_HI		(1<<1)
+#define DEVEL_SWAP_LO		(1<<2)
+#define DEVEL_READ_INODE	(1<<3)
+#define DEVEL_READ_ROMFS	(1<<4)
+#define DEVEL_READ_BLOCK	(1<<5)
+#define DEVEL_PRINTS		DEVEL_NONE
 
 #define _GNU_SOURCE
 #include <sys/types.h>
@@ -76,6 +86,7 @@ static const char *progname = "cramfsck";
 static int fd;			/* ROM image file descriptor */
 static char *filename;		/* ROM image filename */
 struct cramfs_super super;	/* just find the cramfs superblock once */
+static int endian_swap = 0; /* 1 = other endianness, 0 = native endianness */
 static int opt_verbose = 0;	/* 1 = verbose (-v), 2+ = very verbose (-vv) */
 static int opt_continue = 0; /* 1 = continue on error for diagnositc / recovery */
 static int log_errors_continue = 0; /* number of errors we encountered */
@@ -143,6 +154,148 @@ static void die(int status, int syserr, const char *fmt, ...)
     }
 }
 
+#define IBSWAP16(var)	var = __bswap_16( var )
+#define IBSWAP32(var)	var = __bswap_32( var )
+#define IBITSW32(var)	var = reverse_32_bits( var )
+
+#define OPTBSWAP16(var)	if (endian_swap) IBSWAP16(var);
+#define OPTBSWAP32(var)	if (endian_swap) IBSWAP32(var);
+
+/*
+static u32 reverse_32_bits( u32 input ) {
+
+	// byte level
+	IBSWAP32(input);
+
+	// bit level
+	input = ( (input & 0x01010101) << 7 )
+	      | ( (input & 0x02020202) << 5 )
+	      | ( (input & 0x04040404) << 3 )
+	      | ( (input & 0x08080808) << 1 )
+	      | ( (input & 0x10101010) >> 1 )
+	      | ( (input & 0x20202020) >> 3 )
+	      | ( (input & 0x40404040) >> 5 )
+	      | ( (input & 0x80808080) >> 7 )
+		  ;
+
+    return input;
+}
+*/
+
+static int is_magic( u32 input ) {
+
+	if (input == CRAMFS_MAGIC) {
+		return 1;
+	}
+
+	IBSWAP32(input);
+
+	if (input != CRAMFS_MAGIC) {
+		return 0;
+	}
+
+	fprintf( stderr, "endian swap activated\n" );
+	endian_swap = 1;
+	return 1;
+}
+
+static void fix_endian_info( struct cramfs_info *info ) {
+	if (!endian_swap) return;
+	// IBSWAP32( info->crc );
+	IBSWAP32( info->edition );
+	IBSWAP32( info->blocks );
+	IBSWAP32( info->files );
+}
+
+/*
+	Original struct:
+		dword[0]: mode:16, uid:16
+		dword[1]: size:24, gid:8
+		dword[2]: namelen:6, offset:26
+*/
+struct cramfs_inode_swap {
+	u32 uid:CRAMFS_UID_WIDTH, mode:CRAMFS_MODE_WIDTH;
+	u32 gid:CRAMFS_GID_WIDTH, size:CRAMFS_SIZE_WIDTH;
+	u32 offset:CRAMFS_OFFSET_WIDTH, namelen:CRAMFS_NAMELEN_WIDTH;
+};
+
+static void fix_endian_inode( struct cramfs_inode *inode ) {
+	if (!endian_swap) return;
+	// cramfs_inode is a packed struct, so this is more complicated
+	// see eg. http://mjfrazer.org/mjfrazer/bitfields/ for documentation
+	// TLDR: packed struct needs both bit reversal and field reversal
+	// EDIT: actually we do things differently: byte reversal and field reversal
+	// NOTE: (that is maybe a GCC thing)
+
+	#if DEVEL_PRINTS & DEVEL_SWAP_HI
+	fprintf( stderr
+		   , "[>] inode: mode:%06o uid:%04X size:%06X gid:%02X nlen:%02X offs:%07X\n"
+		   , inode->mode
+		   , inode->uid
+		   , inode->size
+		   , inode->gid
+		   , inode->namelen
+		   , inode->offset
+		   );
+	#endif
+
+	// sanity check
+	// TODO: move this to main() or so
+	int len = sizeof(struct cramfs_inode);
+	if (len&3) {
+		die(FSCK_ERROR, 1, "sizeof(cramfs_inode) not 4n");
+	}
+
+	// alias to DWORD array
+	u32* src = (u32*)inode;
+	u32  dst[sizeof(struct cramfs_inode)>>2];
+
+	#if DEVEL_PRINTS& DEVEL_SWAP_LO
+	fprintf( stderr, "[>] dword: %08X %08X %08X\n", src[0], src[1], src[2] );
+	#endif
+
+	// swap each DWORD
+	len >>= 2;
+	while(len--) {
+		// dst[len] = reverse_32_bits( src[len] );
+		dst[len] = __bswap_32( src[len] );
+	}
+
+	#if DEVEL_PRINTS & DEVEL_SWAP_LO
+	fprintf( stderr, "[<] dword: %08X %08X %08X\n", dst[0], dst[1], dst[2] );
+	#endif
+
+	struct cramfs_inode_swap* temp = (void*)&dst;
+	inode->mode    = temp->mode;
+	inode->uid     = temp->uid;
+	inode->size    = temp->size;
+	inode->gid     = temp->gid;
+	inode->namelen = temp->namelen;
+	inode->offset  = temp->offset;
+
+	#if DEVEL_PRINTS & DEVEL_SWAP_HI
+	fprintf( stderr
+		   , "[<] inode: mode:%06o uid:%04X size:%06X gid:%02X nlen:%02X offs:%07X\n"
+		   , inode->mode
+		   , inode->uid
+		   , inode->size
+		   , inode->gid
+		   , inode->namelen
+		   , inode->offset
+		   );
+	#endif
+}
+
+static void fix_endian_super( struct cramfs_super *super ) {
+	if (!endian_swap) return;
+	IBSWAP32( super->magic );
+	IBSWAP32( super->size );
+	IBSWAP32( super->flags );
+	IBSWAP32( super->future );
+	fix_endian_info( &(super->fsid) );
+	fix_endian_inode( &(super->root) );
+}
+
 static void test_super(int *start, size_t *length) {
 	struct stat st;
 
@@ -175,7 +328,7 @@ static void test_super(int *start, size_t *length) {
 	if (read(fd, &super, sizeof(super)) != sizeof(super)) {
 		die(FSCK_ERROR, 1, "read failed: %s", filename);
 	}
-	if (super.magic == CRAMFS_MAGIC) {
+	if (is_magic(super.magic)) {
 		*start = 0;
 	}
 	else if (*length >= (PAD_SIZE + sizeof(super))) {
@@ -183,10 +336,12 @@ static void test_super(int *start, size_t *length) {
 		if (read(fd, &super, sizeof(super)) != sizeof(super)) {
 			die(FSCK_ERROR, 1, "read failed: %s", filename);
 		}
-		if (super.magic == CRAMFS_MAGIC) {
+		if (is_magic(super.magic)) {
 			*start = PAD_SIZE;
 		}
 	}
+
+	fix_endian_super( &super );
 
 	/* superblock tests */
 	if (super.magic != CRAMFS_MAGIC) {
@@ -213,6 +368,15 @@ static void test_super(int *start, size_t *length) {
 	else {
 		fprintf(stderr, "warning: old cramfs format\n");
 	}
+
+	#if DEVEL_PRINTS & DEVEL_SUCCESS
+	fprintf(stderr
+		   , "SUPER: pass size:%u flags:%08X future:%08X | edition:%u blocks:%u files:%u root.mode:%06o\n"
+		   , super.size, super.flags, super.future
+		   , super.fsid.edition, super.fsid.blocks, super.fsid.files
+		   , super.root.mode
+		   );
+	#endif
 }
 
 static void test_crc(int start)
@@ -235,7 +399,9 @@ static void test_crc(int start)
 		buf = mmap(NULL, super.size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (buf != MAP_FAILED) {
 			lseek(fd, 0, SEEK_SET);
-			read(fd, buf, super.size);
+			if (read(fd, buf, super.size)!=super.size) {
+				die(FSCK_ERROR, 1, "read SUPER failed");
+			}
 		}
 	}
 	if (buf != MAP_FAILED) {
@@ -274,8 +440,12 @@ static void test_crc(int start)
 	}
 
 	if (crc != super.fsid.crc) {
-		die(FSCK_UNCORRECTED, 0, "crc error");
+		die(FSCK_UNCORRECTED, 0, "crc error got:%08X exp:%08X",crc,super.fsid.crc);
 	}
+
+	#if DEVEL_PRINTS & DEVEL_SUCCESS
+	fprintf(stderr, "CRC32: pass\n");
+	#endif
 }
 
 #ifdef INCLUDE_FS_TESTS
@@ -301,11 +471,17 @@ static void print_node(char type, struct cramfs_inode *i, char *name)
  */
 static void *romfs_read(unsigned long offset)
 {
+	#if DEVEL_PRINTS & DEVEL_READ_ROMFS
+	fprintf( stderr, "[read] romfs @ %016lX (%lu)\n", offset, offset );
+	#endif
+
 	unsigned int block = offset >> ROMBUFFER_BITS;
 	if (block != read_buffer_block) {
 		read_buffer_block = block;
 		lseek(fd, block << ROMBUFFER_BITS, SEEK_SET);
-		read(fd, read_buffer, ROMBUFFERSIZE * 2);
+		if (read(fd, read_buffer, ROMBUFFERSIZE * 2)!=(ROMBUFFERSIZE * 2)) {
+			die(FSCK_ERROR, 1, "read 2*BUFFER failed");
+		}
 	}
 	return read_buffer + (offset & ROMBUFFERMASK);
 }
@@ -323,7 +499,15 @@ static struct cramfs_inode *cramfs_iget(struct cramfs_inode * i)
 
 static struct cramfs_inode *iget(unsigned int ino)
 {
-	return cramfs_iget(romfs_read(ino));
+	struct cramfs_inode *inode;
+
+	#if DEVEL_PRINTS & DEVEL_READ_INODE
+	fprintf( stderr, "[read] inode # %u\n", ino );
+	#endif
+
+	inode = romfs_read(ino);
+	fix_endian_inode(inode);
+	return cramfs_iget(inode);
 }
 
 static void iput(struct cramfs_inode *inode)
@@ -339,7 +523,7 @@ static struct cramfs_inode *read_super(void)
 	unsigned long offset = super.root.offset << 2;
 
 	if (!S_ISDIR(super.root.mode))
-		die(FSCK_UNCORRECTED, 0, "root inode is not directory");
+		die(FSCK_UNCORRECTED, 0, "root inode is not directory (mode:%06o)",super.root.mode);
 	if (!(super.flags & CRAMFS_FLAG_SHIFTED_ROOT_OFFSET) &&
 	    ((offset != sizeof(struct cramfs_super)) &&
 	     (offset != PAD_SIZE + sizeof(struct cramfs_super))))
@@ -384,11 +568,21 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 		start_data = offset;
 
 	block_ptr = *(u32 *) romfs_read(blkptr_offset);
+	OPTBSWAP32(block_ptr);
+
+	#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+	fprintf( stderr, "[work] block_ptr = %08X = %u\n", block_ptr, block_ptr );
+	#endif
+
 	if ((block_ptr & CRAMFS_BLK_FLAGS) && !(super.flags & CRAMFS_FLAG_EXT_BLOCK_POINTERS))
-	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");	
+	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");
 	uncompressed = (block_ptr & CRAMFS_BLK_FLAG_UNCOMPRESSED);
 	direct = (block_ptr & CRAMFS_BLK_FLAG_DIRECT_PTR);
 	block_ptr &= ~CRAMFS_BLK_FLAGS;
+
+	#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+	fprintf( stderr, "[work] direct:%u block_ptr:%u\n", direct, block_ptr );
+	#endif
 
 	if (direct) {
 		/*
@@ -407,6 +601,7 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 				block_len = size % PAGE_SIZE;
 		} else {
 			block_len = *(u16 *) romfs_read(block_start);
+			OPTBSWAP16(block_len);
 			block_start += 2;
 		}
 	} else {
@@ -418,8 +613,14 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 		 * from the previous block's pointer.
 		 */
 		block_start = offset + maxblock * 4;
-		if (block_nr)
+		if (block_nr) {
 			block_start = *(u32 *) romfs_read(blkptr_offset - 4);
+			OPTBSWAP32(block_start);
+
+			#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+			fprintf( stderr, "[work] block_start = %08X = %u\n", block_start, block_start );
+			#endif
+		}
 		/* Beware... previous ptr might be a direct ptr */
 		if (block_start & CRAMFS_BLK_FLAG_DIRECT_PTR) {
 			/* See comments on earlier code. */
@@ -432,6 +633,7 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 				block_start += PAGE_SIZE;
 			} else {
 				block_len = *(u16 *) romfs_read(block_start);
+				OPTBSWAP16(block_len);
 				block_start += 2 + block_len;
 			}
 		}
@@ -639,7 +841,9 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 	if (opt_verbose) {
 		char *str;
 
-		asprintf(&str, "%s -> %s", path, outbuffer);
+		if ( asprintf(&str, "%s -> %s", path, outbuffer) < 0 ) {
+			die(FSCK_ERROR, 1, "asprintf failed");
+		}
 		print_node('l', i, str);
 		free(str);
 		/* once again with verbose on */
