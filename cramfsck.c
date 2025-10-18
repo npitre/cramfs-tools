@@ -76,6 +76,7 @@ static const char *progname = "cramfsck";
 static int fd;			/* ROM image file descriptor */
 static char *filename;		/* ROM image filename */
 struct cramfs_super super;	/* just find the cramfs superblock once */
+static int endian_swap = 0; /* 1 = other endianness, 0 = native endianness */
 static int opt_verbose = 0;	/* 1 = verbose (-v), 2+ = very verbose (-vv) */
 static int opt_continue = 0; /* 1 = continue on error for diagnositc / recovery */
 static int log_errors_continue = 0; /* number of errors we encountered */
@@ -143,6 +144,113 @@ static void die(int status, int syserr, const char *fmt, ...)
     }
 }
 
+#define IBSWAP16(var)	var = __bswap_16( var )
+#define IBSWAP32(var)	var = __bswap_32( var )
+#define IBITSW32(var)	var = reverse_32_bits( var )
+
+#define OPTBSWAP16(var)	if (endian_swap) IBSWAP16(var);
+#define OPTBSWAP32(var)	if (endian_swap) IBSWAP32(var);
+
+/*
+static u32 reverse_32_bits( u32 input ) {
+
+	// byte level
+	IBSWAP32(input);
+
+	// bit level
+	input = ( (input & 0x01010101) << 7 )
+	      | ( (input & 0x02020202) << 5 )
+	      | ( (input & 0x04040404) << 3 )
+	      | ( (input & 0x08080808) << 1 )
+	      | ( (input & 0x10101010) >> 1 )
+	      | ( (input & 0x20202020) >> 3 )
+	      | ( (input & 0x40404040) >> 5 )
+	      | ( (input & 0x80808080) >> 7 )
+		  ;
+
+    return input;
+}
+*/
+
+static int is_magic( u32 input ) {
+
+	if (input == CRAMFS_MAGIC) {
+		return 1;
+	}
+
+	IBSWAP32(input);
+
+	if (input != CRAMFS_MAGIC) {
+		return 0;
+	}
+
+	fprintf( stderr, "endian swap activated\n" );
+	endian_swap = 1;
+	return 1;
+}
+
+static void fix_endian_info( struct cramfs_info *info ) {
+	if (!endian_swap) return;
+	// IBSWAP32( info->crc );
+	IBSWAP32( info->edition );
+	IBSWAP32( info->blocks );
+	IBSWAP32( info->files );
+}
+
+struct cramfs_inode_swap {
+	u32 uid:CRAMFS_UID_WIDTH, mode:CRAMFS_MODE_WIDTH;
+	u32 gid:CRAMFS_GID_WIDTH, size:CRAMFS_SIZE_WIDTH;
+	u32 offset:CRAMFS_OFFSET_WIDTH, namelen:CRAMFS_NAMELEN_WIDTH;
+};
+
+static void fix_endian_inode( struct cramfs_inode *inode ) {
+	if (!endian_swap) return;
+	// cramfs_inode is a packed inode, so this is more complicated
+	// see eg. http://mjfrazer.org/mjfrazer/bitfields/ for documentation
+	// TLDR: packed struct needs both bit reversal and field reversal
+
+	/*
+		mode:16 uid:16
+		size:24 gid: 8
+		namelen:6 offset:26
+	*/
+
+	// sanity check
+	int len = sizeof(struct cramfs_inode);
+	if (len&3) {
+		die(FSCK_ERROR, 1, "sizeof(cramfs_inode) not 4n");
+	}
+
+	// alias to DWORD array
+	u32* src = (u32*)inode;
+	u32  dst[sizeof(struct cramfs_inode)>>2];
+
+	// swap each DWORD
+	len >>= 2;
+	while(len--) {
+		// dst[len] = reverse_32_bits( src[len] );
+		dst[len] = __bswap_32( src[len] );
+	}
+
+	struct cramfs_inode_swap* temp = (void*)&dst;
+	inode->mode    = temp->mode;
+	inode->uid     = temp->uid;
+	inode->size    = temp->size;
+	inode->gid     = temp->gid;
+	inode->namelen = temp->namelen;
+	inode->offset  = temp->offset;
+}
+
+static void fix_endian_super( struct cramfs_super *super ) {
+	if (!endian_swap) return;
+	IBSWAP32( super->magic );
+	IBSWAP32( super->size );
+	IBSWAP32( super->flags );
+	IBSWAP32( super->future );
+	fix_endian_info( &(super->fsid) );
+	fix_endian_inode( &(super->root) );
+}
+
 static void test_super(int *start, size_t *length) {
 	struct stat st;
 
@@ -175,7 +283,7 @@ static void test_super(int *start, size_t *length) {
 	if (read(fd, &super, sizeof(super)) != sizeof(super)) {
 		die(FSCK_ERROR, 1, "read failed: %s", filename);
 	}
-	if (super.magic == CRAMFS_MAGIC) {
+	if (is_magic(super.magic)) {
 		*start = 0;
 	}
 	else if (*length >= (PAD_SIZE + sizeof(super))) {
@@ -183,10 +291,12 @@ static void test_super(int *start, size_t *length) {
 		if (read(fd, &super, sizeof(super)) != sizeof(super)) {
 			die(FSCK_ERROR, 1, "read failed: %s", filename);
 		}
-		if (super.magic == CRAMFS_MAGIC) {
+		if (is_magic(super.magic)) {
 			*start = PAD_SIZE;
 		}
 	}
+
+	fix_endian_super( &super );
 
 	/* superblock tests */
 	if (super.magic != CRAMFS_MAGIC) {
@@ -327,7 +437,11 @@ static struct cramfs_inode *cramfs_iget(struct cramfs_inode * i)
 
 static struct cramfs_inode *iget(unsigned int ino)
 {
-	return cramfs_iget(romfs_read(ino));
+	struct cramfs_inode *inode;
+
+	inode = romfs_read(ino);
+	fix_endian_inode(inode);
+	return cramfs_iget(inode);
 }
 
 static void iput(struct cramfs_inode *inode)
@@ -388,6 +502,8 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 		start_data = offset;
 
 	block_ptr = *(u32 *) romfs_read(blkptr_offset);
+	OPTBSWAP32(block_ptr);
+
 	if ((block_ptr & CRAMFS_BLK_FLAGS) && !(super.flags & CRAMFS_FLAG_EXT_BLOCK_POINTERS))
 	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");
 	uncompressed = (block_ptr & CRAMFS_BLK_FLAG_UNCOMPRESSED);
@@ -411,6 +527,7 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 				block_len = size % PAGE_SIZE;
 		} else {
 			block_len = *(u16 *) romfs_read(block_start);
+			OPTBSWAP16(block_len);
 			block_start += 2;
 		}
 	} else {
@@ -422,8 +539,10 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 		 * from the previous block's pointer.
 		 */
 		block_start = offset + maxblock * 4;
-		if (block_nr)
+		if (block_nr) {
 			block_start = *(u32 *) romfs_read(blkptr_offset - 4);
+			OPTBSWAP32(block_start);
+		}
 		/* Beware... previous ptr might be a direct ptr */
 		if (block_start & CRAMFS_BLK_FLAG_DIRECT_PTR) {
 			/* See comments on earlier code. */
@@ -436,6 +555,7 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 				block_start += PAGE_SIZE;
 			} else {
 				block_len = *(u16 *) romfs_read(block_start);
+				OPTBSWAP16(block_len);
 				block_start += 2 + block_len;
 			}
 		}
