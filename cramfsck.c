@@ -207,6 +207,12 @@ static void fix_endian_info( struct cramfs_info *info ) {
 	IBSWAP32( info->files );
 }
 
+/*
+	Original struct:
+		dword[0]: mode:16, uid:16
+		dword[1]: size:24, gid:8
+		dword[2]: namelen:6, offset:26
+*/
 struct cramfs_inode_swap {
 	u32 uid:CRAMFS_UID_WIDTH, mode:CRAMFS_MODE_WIDTH;
 	u32 gid:CRAMFS_GID_WIDTH, size:CRAMFS_SIZE_WIDTH;
@@ -215,15 +221,11 @@ struct cramfs_inode_swap {
 
 static void fix_endian_inode( struct cramfs_inode *inode ) {
 	if (!endian_swap) return;
-	// cramfs_inode is a packed inode, so this is more complicated
+	// cramfs_inode is a packed struct, so this is more complicated
 	// see eg. http://mjfrazer.org/mjfrazer/bitfields/ for documentation
 	// TLDR: packed struct needs both bit reversal and field reversal
-
-	/*
-		mode:16 uid:16
-		size:24 gid: 8
-		namelen:6 offset:26
-	*/
+	// EDIT: actually we do things differently: byte reversal and field reversal
+	// NOTE: (that is maybe a GCC thing)
 
 	#if DEVEL_PRINTS & DEVEL_SWAP_HI
 	fprintf( stderr
@@ -238,6 +240,7 @@ static void fix_endian_inode( struct cramfs_inode *inode ) {
 	#endif
 
 	// sanity check
+	// TODO: move this to main() or so
 	int len = sizeof(struct cramfs_inode);
 	if (len&3) {
 		die(FSCK_ERROR, 1, "sizeof(cramfs_inode) not 4n");
