@@ -1261,7 +1261,9 @@ static int interpret_table_entry(char *line, struct entry *root, loff_t *fslen_u
 			dev_t rdev;
 
 			for (i = start; i < count; i++) {
-				asprintf(&buf, "%s%lu", name, i);
+				if ( asprintf(&buf, "%s%lu", name, i) < 0 ) {
+					perror_msg_and_die("asprintf failed");
+				}
 				rdev = makedev(major, minor + (i * increment - start));
 				modify_entry(buf, uid, gid, mode, rdev, root, fslen_ub);
 				free(buf);

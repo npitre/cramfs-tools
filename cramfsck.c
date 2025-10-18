@@ -235,7 +235,9 @@ static void test_crc(int start)
 		buf = mmap(NULL, super.size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (buf != MAP_FAILED) {
 			lseek(fd, 0, SEEK_SET);
-			read(fd, buf, super.size);
+			if (read(fd, buf, super.size)!=super.size) {
+				die(FSCK_ERROR, 1, "read SUPER failed");
+			}
 		}
 	}
 	if (buf != MAP_FAILED) {
@@ -305,7 +307,9 @@ static void *romfs_read(unsigned long offset)
 	if (block != read_buffer_block) {
 		read_buffer_block = block;
 		lseek(fd, block << ROMBUFFER_BITS, SEEK_SET);
-		read(fd, read_buffer, ROMBUFFERSIZE * 2);
+		if (read(fd, read_buffer, ROMBUFFERSIZE * 2)!=(ROMBUFFERSIZE * 2)) {
+			die(FSCK_ERROR, 1, "read 2*BUFFER failed");
+		}
 	}
 	return read_buffer + (offset & ROMBUFFERMASK);
 }
@@ -639,7 +643,9 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 	if (opt_verbose) {
 		char *str;
 
-		asprintf(&str, "%s -> %s", path, outbuffer);
+		if ( asprintf(&str, "%s -> %s", path, outbuffer) < 0 ) {
+			die(FSCK_ERROR, 1, "asprintf failed");
+		}
 		print_node('l', i, str);
 		free(str);
 		/* once again with verbose on */
