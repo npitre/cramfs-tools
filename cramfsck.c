@@ -35,6 +35,16 @@
 /* compile-time options */
 #define INCLUDE_FS_TESTS	/* include cramfs checking and extraction */
 
+/* extra low level verbosity */
+#define DEVEL_NONE			0
+#define DEVEL_SUCCESS		(1<<0)
+#define DEVEL_SWAP_HI		(1<<1)
+#define DEVEL_SWAP_LO		(1<<2)
+#define DEVEL_READ_INODE	(1<<3)
+#define DEVEL_READ_ROMFS	(1<<4)
+#define DEVEL_READ_BLOCK	(1<<5)
+#define DEVEL_PRINTS		DEVEL_NONE
+
 #define _GNU_SOURCE
 #include <sys/types.h>
 #include <stdio.h>
@@ -215,6 +225,18 @@ static void fix_endian_inode( struct cramfs_inode *inode ) {
 		namelen:6 offset:26
 	*/
 
+	#if DEVEL_PRINTS & DEVEL_SWAP_HI
+	fprintf( stderr
+		   , "[>] inode: mode:%06o uid:%04X size:%06X gid:%02X nlen:%02X offs:%07X\n"
+		   , inode->mode
+		   , inode->uid
+		   , inode->size
+		   , inode->gid
+		   , inode->namelen
+		   , inode->offset
+		   );
+	#endif
+
 	// sanity check
 	int len = sizeof(struct cramfs_inode);
 	if (len&3) {
@@ -225,12 +247,20 @@ static void fix_endian_inode( struct cramfs_inode *inode ) {
 	u32* src = (u32*)inode;
 	u32  dst[sizeof(struct cramfs_inode)>>2];
 
+	#if DEVEL_PRINTS& DEVEL_SWAP_LO
+	fprintf( stderr, "[>] dword: %08X %08X %08X\n", src[0], src[1], src[2] );
+	#endif
+
 	// swap each DWORD
 	len >>= 2;
 	while(len--) {
 		// dst[len] = reverse_32_bits( src[len] );
 		dst[len] = __bswap_32( src[len] );
 	}
+
+	#if DEVEL_PRINTS & DEVEL_SWAP_LO
+	fprintf( stderr, "[<] dword: %08X %08X %08X\n", dst[0], dst[1], dst[2] );
+	#endif
 
 	struct cramfs_inode_swap* temp = (void*)&dst;
 	inode->mode    = temp->mode;
@@ -239,6 +269,18 @@ static void fix_endian_inode( struct cramfs_inode *inode ) {
 	inode->gid     = temp->gid;
 	inode->namelen = temp->namelen;
 	inode->offset  = temp->offset;
+
+	#if DEVEL_PRINTS & DEVEL_SWAP_HI
+	fprintf( stderr
+		   , "[<] inode: mode:%06o uid:%04X size:%06X gid:%02X nlen:%02X offs:%07X\n"
+		   , inode->mode
+		   , inode->uid
+		   , inode->size
+		   , inode->gid
+		   , inode->namelen
+		   , inode->offset
+		   );
+	#endif
 }
 
 static void fix_endian_super( struct cramfs_super *super ) {
@@ -323,6 +365,15 @@ static void test_super(int *start, size_t *length) {
 	else {
 		fprintf(stderr, "warning: old cramfs format\n");
 	}
+
+	#if DEVEL_PRINTS & DEVEL_SUCCESS
+	fprintf(stderr
+		   , "SUPER: pass size:%u flags:%08X future:%08X | edition:%u blocks:%u files:%u root.mode:%06o\n"
+		   , super.size, super.flags, super.future
+		   , super.fsid.edition, super.fsid.blocks, super.fsid.files
+		   , super.root.mode
+		   );
+	#endif
 }
 
 static void test_crc(int start)
@@ -386,8 +437,12 @@ static void test_crc(int start)
 	}
 
 	if (crc != super.fsid.crc) {
-		die(FSCK_UNCORRECTED, 0, "crc error");
+		die(FSCK_UNCORRECTED, 0, "crc error got:%08X exp:%08X",crc,super.fsid.crc);
 	}
+
+	#if DEVEL_PRINTS & DEVEL_SUCCESS
+	fprintf(stderr, "CRC32: pass\n");
+	#endif
 }
 
 #ifdef INCLUDE_FS_TESTS
@@ -413,6 +468,10 @@ static void print_node(char type, struct cramfs_inode *i, char *name)
  */
 static void *romfs_read(unsigned long offset)
 {
+	#if DEVEL_PRINTS & DEVEL_READ_ROMFS
+	fprintf( stderr, "[read] romfs @ %016lX (%lu)\n", offset, offset );
+	#endif
+
 	unsigned int block = offset >> ROMBUFFER_BITS;
 	if (block != read_buffer_block) {
 		read_buffer_block = block;
@@ -439,6 +498,10 @@ static struct cramfs_inode *iget(unsigned int ino)
 {
 	struct cramfs_inode *inode;
 
+	#if DEVEL_PRINTS & DEVEL_READ_INODE
+	fprintf( stderr, "[read] inode # %u\n", ino );
+	#endif
+
 	inode = romfs_read(ino);
 	fix_endian_inode(inode);
 	return cramfs_iget(inode);
@@ -457,7 +520,7 @@ static struct cramfs_inode *read_super(void)
 	unsigned long offset = super.root.offset << 2;
 
 	if (!S_ISDIR(super.root.mode))
-		die(FSCK_UNCORRECTED, 0, "root inode is not directory");
+		die(FSCK_UNCORRECTED, 0, "root inode is not directory (mode:%06o)",super.root.mode);
 	if (!(super.flags & CRAMFS_FLAG_SHIFTED_ROOT_OFFSET) &&
 	    ((offset != sizeof(struct cramfs_super)) &&
 	     (offset != PAD_SIZE + sizeof(struct cramfs_super))))
@@ -504,11 +567,19 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 	block_ptr = *(u32 *) romfs_read(blkptr_offset);
 	OPTBSWAP32(block_ptr);
 
+	#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+	fprintf( stderr, "[work] block_ptr = %08X = %u\n", block_ptr, block_ptr );
+	#endif
+
 	if ((block_ptr & CRAMFS_BLK_FLAGS) && !(super.flags & CRAMFS_FLAG_EXT_BLOCK_POINTERS))
 	       die(FSCK_UNCORRECTED, 0, "block pointer extension usage not in super block");
 	uncompressed = (block_ptr & CRAMFS_BLK_FLAG_UNCOMPRESSED);
 	direct = (block_ptr & CRAMFS_BLK_FLAG_DIRECT_PTR);
 	block_ptr &= ~CRAMFS_BLK_FLAGS;
+
+	#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+	fprintf( stderr, "[work] direct:%u block_ptr:%u\n", direct, block_ptr );
+	#endif
 
 	if (direct) {
 		/*
@@ -542,6 +613,10 @@ static int read_block(unsigned long offset, unsigned int block_nr,
 		if (block_nr) {
 			block_start = *(u32 *) romfs_read(blkptr_offset - 4);
 			OPTBSWAP32(block_start);
+
+			#if DEBUG_PRINTS & DEVEL_READ_BLOCK
+			fprintf( stderr, "[work] block_start = %08X = %u\n", block_start, block_start );
+			#endif
 		}
 		/* Beware... previous ptr might be a direct ptr */
 		if (block_start & CRAMFS_BLK_FLAG_DIRECT_PTR) {
