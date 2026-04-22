@@ -566,6 +566,9 @@ static void do_directory(char *path, struct cramfs_inode *i)
 		int newlen = child->namelen << 2;
 
 		size = sizeof(struct cramfs_inode) + newlen;
+		if (size > count) {
+			die(FSCK_UNCORRECTED, 0, "directory entry extends past parent size");
+		}
 		count -= size;
 
 		offset += sizeof(struct cramfs_inode);
