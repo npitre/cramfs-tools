@@ -99,7 +99,8 @@ static char read_buffer[ROMBUFFERSIZE * 2];
 static unsigned long read_buffer_block = ~0UL;
 
 /* Uncompressing data structures... */
-static char outbuffer[PAGE_SIZE*2];
+/* +1 so that do_symlink's trailing NUL never falls one byte past the end */
+static char outbuffer[PAGE_SIZE*2 + 1];
 static z_stream stream;
 
 /* Prototypes */
@@ -651,6 +652,7 @@ static void do_symlink(char *path, struct cramfs_inode *i)
 		free(str);
 		/* once again with verbose on */
 		read_block(offset, 0, i->size);
+		outbuffer[size] = 0;
 	}
 	if (opt_extract) {
 		if (symlink(outbuffer, path) < 0) {
