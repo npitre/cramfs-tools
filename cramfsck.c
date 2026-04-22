@@ -304,9 +304,19 @@ static void *romfs_read(unsigned long offset)
 {
 	unsigned int block = offset >> ROMBUFFER_BITS;
 	if (block != read_buffer_block) {
+		ssize_t n;
+
 		read_buffer_block = block;
-		lseek(fd, block << ROMBUFFER_BITS, SEEK_SET);
-		read(fd, read_buffer, ROMBUFFERSIZE * 2);
+		/* Zero first so that any region past EOF reads as zero
+		   rather than stale bytes from a previous window. */
+		memset(read_buffer, 0, sizeof(read_buffer));
+		if (lseek(fd, block << ROMBUFFER_BITS, SEEK_SET) == (off_t)-1) {
+			die(FSCK_ERROR, 1, "lseek failed: %s", filename);
+		}
+		n = read(fd, read_buffer, ROMBUFFERSIZE * 2);
+		if (n < 0) {
+			die(FSCK_ERROR, 1, "read failed: %s", filename);
+		}
 	}
 	return read_buffer + (offset & ROMBUFFERMASK);
 }
