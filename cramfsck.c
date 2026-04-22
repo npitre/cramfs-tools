@@ -567,6 +567,13 @@ static void do_directory(char *path, struct cramfs_inode *i)
 		if ((pathlen + newlen) - strlen(newpath) > 3) {
 			die(FSCK_UNCORRECTED, 0, "bad filename length");
 		}
+		{
+			const char *name = newpath + pathlen;
+			if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+			    strchr(name, '/') != NULL) {
+				die(FSCK_UNCORRECTED, 0, "bad filename: %s", name);
+			}
+		}
 		expand_fs(newpath, child);
 
 		offset += newlen;
