@@ -607,7 +607,7 @@ static void do_file(char *path, struct cramfs_inode *i)
 		print_node('f', i, path);
 	}
 	if (opt_extract) {
-		fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, i->mode);
+		fd = open(path, O_WRONLY | O_CREAT | O_EXCL, i->mode);
 		if (fd < 0) {
 			die(FSCK_ERROR, 1, "open failed: %s", path);
 		}
