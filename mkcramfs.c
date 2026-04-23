@@ -487,13 +487,22 @@ static unsigned int parse_directory(struct entry *root_entry, const char *name, 
 		if (S_ISDIR(st.st_mode)) {
 			entry->size = parse_directory(root_entry, path, &entry->child, fslen_ub);
 		} else if (S_ISREG(st.st_mode)) {
-			if (entry->size) {
+			/*
+			 * entry->size was assigned from st.st_size via
+			 * a narrowing conversion to unsigned int above.
+			 * Compare against st.st_size here so we don't
+			 * miss files whose size happens to wrap low
+			 * modulo 2^32 -- e.g. exactly 4 GiB, which
+			 * would otherwise be silently stored as an
+			 * empty file.
+			 */
+			if (st.st_size) {
 				if (access(path, R_OK) < 0) {
 					warn_skip = 1;
 					continue;
 				}
 				entry->path = xstrdup(path);
-				if ((entry->size >= 1 << CRAMFS_SIZE_WIDTH)) {
+				if (st.st_size >= 1 << CRAMFS_SIZE_WIDTH) {
 					warn_size = 1;
 					entry->size = (1 << CRAMFS_SIZE_WIDTH) - 1;
 				}
