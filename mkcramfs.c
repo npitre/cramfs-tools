@@ -1237,10 +1237,12 @@ static int interpret_table_entry(char *line, struct entry *root, loff_t *fslen_u
 	unsigned long mode = 0755, uid = 0, gid = 0, major = 0, minor = 0;
 	unsigned long start = 0, increment = 1, count = 0;
 
+	/* Require at least path + type; the switch below reads `type`. */
 	if (sscanf (line, "%" SCANF_PREFIX "s %c %lo %lu %lu %lu %lu %lu %lu %lu",
 		 SCANF_STRING(name), &type, &mode, &uid, &gid, &major, &minor,
-		 &start, &increment, &count) < 0) 
+		 &start, &increment, &count) < 2)
 	{
+		free(name);
 		return 1;
 	}
 
@@ -1269,9 +1271,9 @@ static int interpret_table_entry(char *line, struct entry *root, loff_t *fslen_u
 			unsigned long i;
 			dev_t rdev;
 
-			for (i = start; i < count; i++) {
-				asprintf(&buf, "%s%lu", name, i);
-				rdev = makedev(major, minor + (i * increment - start));
+			for (i = 0; i < count; i++) {
+				asprintf(&buf, "%s%lu", name, start + i);
+				rdev = makedev(major, minor + i * increment);
 				modify_entry(buf, uid, gid, mode, rdev, root, fslen_ub);
 				free(buf);
 			}
