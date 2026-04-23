@@ -109,10 +109,6 @@
 		  + (1 << CRAMFS_SIZE_WIDTH) * 4 / PAGE_SIZE /* block pointers */ )
 
 
-/* The kernel assumes PAGE_SIZE as block size. */
-#define PAGE_SIZE (4096)
-
-
 static const char *progname = "mkcramfs";
 static unsigned int blksize = PAGE_SIZE;
 static long total_blocks = 0, total_nodes = 1; /* pre-count the root node */
@@ -318,6 +314,7 @@ extern char *xreadlink(const char *path)
 		readsize = readlink(path, buf, bufsize); /* 1st try */
 		if (readsize == -1) {
 		    perror_msg("%s:%s", progname, path);
+		    free(buf);
 		    return NULL;
 		}
 	}           
