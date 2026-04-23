@@ -122,26 +122,50 @@ static void __attribute__((noreturn)) usage(int status)
 	exit(status);
 }
 
-static void die(int status, int syserr, const char *fmt, ...)
+static void print_error(int saved_errno, int syserr, const char *fmt, va_list arg_ptr)
 {
-	va_list arg_ptr;
-	int save = errno;
-
 	fflush(0);
-	va_start(arg_ptr, fmt);
 	fprintf(stderr, "%s: ", progname);
 	vfprintf(stderr, fmt, arg_ptr);
 	if (syserr) {
-		fprintf(stderr, ": %s", strerror(save));
+		fprintf(stderr, ": %s", strerror(saved_errno));
 	}
 	fprintf(stderr, "\n");
+}
+
+static void __attribute__((noreturn)) die(int status, int syserr, const char *fmt, ...)
+{
+	int save = errno;
+	va_list arg_ptr;
+
+	va_start(arg_ptr, fmt);
+	print_error(save, syserr, fmt, arg_ptr);
+	va_end(arg_ptr);
+	exit(status);
+}
+
+/*
+ * Non-fatal counterpart to die(): under -c (continue-on-error) it logs
+ * the error, folds the status into log_errors_result for the final
+ * exit code, and returns to the caller.  Without -c it behaves the
+ * same as die().  Use this only at sites where it is genuinely safe
+ * to proceed -- typically best-effort metadata updates.  Corruption
+ * checks and filesystem side-effect failures should use die().
+ */
+static void warn_error(int status, int syserr, const char *fmt, ...)
+{
+	int save = errno;
+	va_list arg_ptr;
+
+	va_start(arg_ptr, fmt);
+	print_error(save, syserr, fmt, arg_ptr);
 	va_end(arg_ptr);
 	if (opt_continue > 0) {
 		log_errors_continue++;
-        log_errors_result |= status;
+		log_errors_result |= status;
 	} else {
 		exit(status);
-    }
+	}
 }
 
 static void test_super(int *start, size_t *length) {
@@ -510,22 +534,28 @@ static void change_file_status(char *path, struct cramfs_inode *i)
 {
 	struct utimbuf epoch = { 0, 0 };
 
+	/*
+	 * Metadata updates are best-effort: under -c we keep going after
+	 * a failure (e.g. chown/utime failing when not running as root),
+	 * which is what continue-on-error mode was introduced for.  The
+	 * extracted content itself has already been written.
+	 */
 	if (euid == 0) {
 		if (lchown(path, i->uid, i->gid) < 0) {
-			die(FSCK_ERROR, 1, "lchown failed: %s", path);
+			warn_error(FSCK_ERROR, 1, "lchown failed: %s", path);
 		}
 		if (S_ISLNK(i->mode))
 			return;
 		if ((S_ISUID | S_ISGID) & i->mode) {
 			if (chmod(path, i->mode) < 0) {
-				die(FSCK_ERROR, 1, "chown failed: %s", path);
+				warn_error(FSCK_ERROR, 1, "chmod failed: %s", path);
 			}
 		}
 	}
 	if (S_ISLNK(i->mode))
 		return;
 	if (utime(path, &epoch) < 0) {
-		die(FSCK_ERROR, 1, "utime failed: %s", path);
+		warn_error(FSCK_ERROR, 1, "utime failed: %s", path);
 	}
 }
 
